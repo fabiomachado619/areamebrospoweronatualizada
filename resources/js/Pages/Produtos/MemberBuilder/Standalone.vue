@@ -31,7 +31,6 @@ import {
     Trophy,
     BarChart3,
     Presentation,
-    RotateCcw,
 } from 'lucide-vue-next';
 import {
     communityPageIconComponents,
@@ -182,7 +181,6 @@ const tabs = [
     { id: 'certificado', label: 'Certificado', icon: Award, hasPreview: true, previewMode: 'certificate' },
     { id: 'gamificacao', label: 'Gamificação', icon: Trophy, hasPreview: false },
     { id: 'login', label: 'Login', icon: LogIn, hasPreview: true, previewMode: 'login' },
-    { id: 'reembolso', label: 'Reembolso', icon: RotateCcw, hasPreview: false },
     { id: 'pwa', label: 'PWA e URL', icon: Smartphone, hasPreview: false },
 ];
 
@@ -2901,65 +2899,6 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                         <Button type="button" class="mt-4" @click="saveConfig" :disabled="processing">Salvar</Button>
                     </template>
 
-                    <template v-else-if="activeTab === 'reembolso'">
-                        <div class="mx-auto max-w-3xl space-y-6">
-                            <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/50">
-                                <h3 class="text-base font-semibold text-zinc-900 dark:text-white">Reembolso na área de membros</h3>
-                                <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                                    Permite que o aluno solicite reembolso pelo menu da conta no header da área de membros.
-                                </p>
-                                <div class="mt-4 flex items-center justify-between gap-4">
-                                    <label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Habilitar solicitação de reembolso</label>
-                                    <Toggle v-model="configForm.member_area_config.refund.enabled" />
-                                </div>
-                                <div v-if="configForm.member_area_config.refund.enabled" class="mt-6 space-y-5 border-t border-zinc-100 pt-5 dark:border-zinc-700">
-                                    <div>
-                                        <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Prazo (dias após liberação do acesso)</label>
-                                        <input
-                                            v-model.number="configForm.member_area_config.refund.days"
-                                            type="number"
-                                            min="1"
-                                            max="365"
-                                            class="mt-1 w-full max-w-[120px] rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                                        />
-                                    </div>
-                                    <div>
-                                        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Modo de processamento</p>
-                                        <div class="mt-2 space-y-2">
-                                            <label class="flex cursor-pointer items-start gap-2">
-                                                <input
-                                                    v-model="configForm.member_area_config.refund.mode"
-                                                    type="radio"
-                                                    value="auto"
-                                                    class="mt-1"
-                                                />
-                                                <span>
-                                                    <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Automático</span>
-                                                    <span class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
-                                                        Estorno imediato via API apenas para pagamentos PIX na CajuPay. Cartão e outros gateways entram em fila manual.
-                                                    </span>
-                                                </span>
-                                            </label>
-                                            <label class="flex cursor-pointer items-start gap-2">
-                                                <input
-                                                    v-model="configForm.member_area_config.refund.mode"
-                                                    type="radio"
-                                                    value="manual"
-                                                    class="mt-1"
-                                                />
-                                                <span>
-                                                    <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Aprovação manual</span>
-                                                    <span class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
-                                                        Solicitações aparecem no menu Reembolsos do painel para você aprovar ou rejeitar.
-                                                    </span>
-                                                </span>
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </template>
                     <template v-else-if="activeTab === 'pwa'">
                         <div class="mx-auto max-w-3xl space-y-6">
                             <!-- Formulário em cards -->

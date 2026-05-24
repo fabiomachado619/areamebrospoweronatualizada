@@ -714,6 +714,80 @@ class CajuPayDriver implements GatewayDriver
             }
         }
 
+        $sessionToken = (string) ($meta['cajupay_session_token'] ?? '');
+        foreach (array_values(array_unique(array_filter([$sessionId, $sessionToken, $gatewayId]))) as $sessionCandidate) {
+            if ($sessionCandidate === '' || ! $this->looksLikeUuid($sessionCandidate)) {
+                continue;
+            }
+            $fromSession = $this->extractPaymentIdFromPublicSdkSession($sessionCandidate, $credentials);
+            if ($fromSession !== null) {
+                return $fromSession;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extrai payment_id (UUID) da sessão pública do checkout SDK.
+     *
+     * @param  array<string, mixed>  $credentials
+     */
+    private function extractPaymentIdFromPublicSdkSession(string $sessionToken, array $credentials = []): ?string
+    {
+        if ($sessionToken === '') {
+            return null;
+        }
+
+        try {
+            $response = Http::acceptJson()
+                ->timeout(15)
+                ->withOptions(['connect_timeout' => 10])
+                ->baseUrl($this->baseUrl($credentials))
+                ->get('/api/sdk/public/checkout/sessions/'.urlencode($sessionToken));
+
+            if (! $response->successful()) {
+                return null;
+            }
+
+            $data = $response->json();
+            if (! is_array($data)) {
+                return null;
+            }
+
+            return $this->extractPaymentIdFromSessionPayload($data);
+        } catch (\Throwable $e) {
+            Log::debug('CajuPayDriver extractPaymentIdFromPublicSdkSession', ['message' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function extractPaymentIdFromSessionPayload(array $data): ?string
+    {
+        foreach (['payment_id', 'charge_id', 'cajupay_charge_id', 'cajupay_payment_id'] as $key) {
+            $value = $data[$key] ?? null;
+            if (is_string($value) && $value !== '' && $this->looksLikeUuid($value)) {
+                return $value;
+            }
+        }
+
+        foreach (['payment', 'latest_payment', 'charge', 'latest_charge'] as $nest) {
+            $obj = $data[$nest] ?? null;
+            if (! is_array($obj)) {
+                continue;
+            }
+            foreach (['payment_id', 'charge_id', 'id'] as $key) {
+                $value = $obj[$key] ?? null;
+                if (is_string($value) && $value !== '' && $this->looksLikeUuid($value)) {
+                    return $value;
+                }
+            }
+        }
+
         return null;
     }
 

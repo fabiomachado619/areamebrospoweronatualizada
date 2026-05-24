@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
-import { router } from '@inertiajs/vue3';
+import { router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import LayoutInfoprodutor from '@/Layouts/LayoutInfoprodutor.vue';
 import VendasTabs from '@/components/vendas/VendasTabs.vue';
@@ -17,6 +17,7 @@ import {
     Mail,
     Download,
     CheckCircle,
+    RotateCcw,
     Search,
     X,
 } from 'lucide-vue-next';
@@ -41,9 +42,20 @@ const openMenuId = ref(null);
 const menuAnchorEl = ref(null);
 const menuEl = ref(null);
 const menuPos = ref({ top: 0, left: 0 });
+const page = usePage();
 const resendingId = ref(null);
 const approvingId = ref(null);
+const refundingId = ref(null);
+const refundModalOpen = ref(false);
+const refundTarget = ref(null);
+const refundAdminNotes = ref('');
 const toast = ref({ message: null, type: null });
+
+const canManageRefund = computed(() => {
+    const role = page.props.auth?.user?.role;
+    if (role === 'admin' || role === 'infoprodutor') return true;
+    return !!page.props.auth?.permissions?.['reembolsos.manage'];
+});
 let toastTimer = null;
 
 const filterOptions = [
@@ -268,6 +280,44 @@ async function resendEmail(v) {
         );
     } finally {
         resendingId.value = null;
+    }
+}
+
+function openRefundModal(v) {
+    closeMenu();
+    refundTarget.value = v;
+    refundAdminNotes.value = '';
+    refundModalOpen.value = true;
+}
+
+function closeRefundModal() {
+    refundModalOpen.value = false;
+    refundTarget.value = null;
+    refundAdminNotes.value = '';
+}
+
+async function confirmRefund() {
+    const v = refundTarget.value;
+    if (!v || refundingId.value) return;
+    refundingId.value = v.id;
+    try {
+        const { data } = await axios.post(`/vendas/${v.id}/refund`, {
+            admin_notes: refundAdminNotes.value.trim() || null,
+        });
+        if (data.success) {
+            closeRefundModal();
+            showToast(data.message ?? 'Reembolso processado.', 'success');
+            router.reload({ preserveScroll: true });
+        } else {
+            showToast(data.message ?? 'Não foi possível reembolsar.', 'error');
+        }
+    } catch (err) {
+        showToast(
+            err.response?.data?.message ?? 'Erro ao reembolsar. Tente novamente.',
+            'error'
+        );
+    } finally {
+        refundingId.value = null;
     }
 }
 
@@ -884,6 +934,15 @@ function openProofExport() {
                     {{ approvingId === openMenuId ? 'Aprovando...' : 'Aprovar manualmente' }}
                 </button>
                 <button
+                    v-if="canManageRefund && menuVenda.can_refund"
+                    type="button"
+                    class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-900/20"
+                    @click="openRefundModal(menuVenda)"
+                >
+                    <RotateCcw class="h-4 w-4 shrink-0" />
+                    Reembolsar
+                </button>
+                <button
                     type="button"
                     class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
                     :disabled="resendingId === openMenuId || menuVenda.status === 'pending'"
@@ -893,6 +952,72 @@ function openProofExport() {
                     <Mail class="h-4 w-4 shrink-0" />
                     {{ resendingId === openMenuId ? 'Enviando...' : 'Reenviar e-mail de compra' }}
                 </button>
+            </div>
+            <div
+                v-if="refundModalOpen && refundTarget"
+                class="fixed inset-0 z-[100002] flex items-center justify-center bg-black/50 p-4"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="refund-venda-title"
+                @click.self="closeRefundModal"
+            >
+                <div class="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+                    <h2 id="refund-venda-title" class="text-lg font-semibold text-zinc-900 dark:text-white">
+                        Confirmar reembolso
+                    </h2>
+                    <p class="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                        Pedido <strong>#{{ refundTarget.id }}</strong> —
+                        {{ displayMoney(refundTarget.amount_total ?? refundTarget.amount, refundTarget.currency) }}
+                        ({{ refundTarget.gateway_label ?? refundTarget.gateway ?? '–' }})
+                    </p>
+                    <p
+                        v-if="refundTarget.refund_auto_cajupay_pix"
+                        class="mt-3 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:bg-sky-950/40 dark:text-sky-200"
+                    >
+                        Pagamento PIX via CajuPay: o estorno será solicitado automaticamente na API. O status do pedido
+                        será atualizado quando o gateway confirmar.
+                    </p>
+                    <p
+                        v-else-if="refundTarget.gateway === 'cajupay'"
+                        class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                    >
+                        CajuPay (cartão/outro): registre o reembolso aqui e conclua o estorno no painel CajuPay. O acesso
+                        do aluno será revogado ao confirmar o webhook.
+                    </p>
+                    <p
+                        v-else
+                        class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                    >
+                        O pedido será marcado como reembolsado e o acesso do aluno será revogado imediatamente.
+                    </p>
+                    <label class="mt-4 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        Observação (opcional)
+                    </label>
+                    <textarea
+                        v-model="refundAdminNotes"
+                        rows="2"
+                        class="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
+                        placeholder="Motivo ou nota interna…"
+                    />
+                    <div class="mt-6 flex gap-2">
+                        <button
+                            type="button"
+                            class="flex-1 rounded-lg border border-zinc-300 px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                            :disabled="refundingId === refundTarget.id"
+                            @click="closeRefundModal"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="button"
+                            class="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                            :disabled="refundingId === refundTarget.id"
+                            @click="confirmRefund"
+                        >
+                            {{ refundingId === refundTarget.id ? 'Processando…' : 'Confirmar reembolso' }}
+                        </button>
+                    </div>
+                </div>
             </div>
             <Transition
                 enter-active-class="transition duration-200 ease-out"

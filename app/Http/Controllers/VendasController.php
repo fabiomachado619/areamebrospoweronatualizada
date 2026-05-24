@@ -9,6 +9,7 @@ use App\Models\ProductOffer;
 use App\Models\OrderItem;
 use App\Models\Subscription;
 use App\Services\AccessEmailService;
+use App\Services\RefundService;
 use App\Services\TeamAccessService;
 use App\Support\OrderCurrencyTotals;
 use Illuminate\Http\JsonResponse;
@@ -264,6 +265,9 @@ class VendasController extends Controller
                 $arr['checkout_url'] = url('/c/'.$o->getCheckoutSlug());
                 $arr['payment_type_label'] = $this->paymentTypeLabel($o);
                 $arr['amount_total'] = $o->lineItemsTotalAmount();
+                $refundCheck = app(RefundService::class)->canRefundFromPanel($o);
+                $arr['can_refund'] = $refundCheck['can'];
+                $arr['refund_auto_cajupay_pix'] = $refundCheck['auto_cajupay_pix'];
 
                 return $arr;
             });
@@ -519,6 +523,48 @@ class VendasController extends Controller
         }
 
         return response()->json(['success' => true, 'message' => 'Pedido aprovado. O e-mail de acesso foi enviado ao cliente.']);
+    }
+
+    public function refund(Order $order, RefundService $refundService): JsonResponse
+    {
+        $tenantId = auth()->user()->tenant_id;
+        if ($order->tenant_id !== $tenantId) {
+            return response()->json(['success' => false, 'message' => 'Pedido não encontrado.'], 404);
+        }
+
+        if (auth()->user()->isTeam()) {
+            $allowed = app(TeamAccessService::class)->allowedProductIdsFor(auth()->user());
+            if ($allowed !== [] && ! in_array($order->product_id, $allowed, true)) {
+                return response()->json(['success' => false, 'message' => 'Sem permissão para este produto.'], 403);
+            }
+        }
+
+        $validated = request()->validate([
+            'admin_notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        try {
+            $result = $refundService->initiateRefundFromPanel(
+                $order,
+                auth()->user(),
+                $validated['admin_notes'] ?? null
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $message = collect($e->errors())->flatten()->first() ?? 'Não foi possível reembolsar.';
+
+            return response()->json(['success' => false, 'message' => $message], 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage() ?: 'Erro ao processar reembolso.',
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['message'],
+            'auto_cajupay_pix' => $result['auto_cajupay_pix'],
+        ]);
     }
 
     private function productDisplayName(Order $order): string

@@ -330,6 +330,8 @@ class ProdutosController extends Controller
             ->values()
             ->all();
 
+        $produtoArray['member_area_refund'] = $produto->memberAreaRefundConfig();
+
         return Inertia::render('Produtos/Edit', [
             'produto' => $produtoArray,
             'productTypes' => $productTypes,
@@ -394,6 +396,31 @@ class ProdutosController extends Controller
         }
 
         return response()->json(['ok' => true]);
+    }
+
+    public function updateMemberAreaRefund(Request $request, Product $produto)
+    {
+        $this->authorizeProduct($produto);
+
+        if ($produto->type !== Product::TYPE_AREA_MEMBROS) {
+            return redirect()->back()->with('error', 'Reembolso na área de membros só se aplica a produtos do tipo área de membros.');
+        }
+
+        $validated = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'days' => ['required', 'integer', 'min:1', 'max:365'],
+            'mode' => ['required', 'string', 'in:auto,manual'],
+        ]);
+
+        $config = $produto->member_area_config ?? [];
+        $config['refund'] = [
+            'enabled' => (bool) $validated['enabled'],
+            'days' => max(1, min(365, (int) $validated['days'])),
+            'mode' => $validated['mode'],
+        ];
+        $produto->update(['member_area_config' => $config]);
+
+        return redirect()->back()->with('success', 'Configurações de reembolso salvas.');
     }
 
     public function update(Request $request, Product $produto)

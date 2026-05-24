@@ -33,6 +33,7 @@ import {
     Layers,
     MapPin,
     ChevronDown,
+    RotateCcw,
 } from 'lucide-vue-next';
 import axios from 'axios';
 import EmailTemplatePreview from '@/components/produtos/EmailTemplatePreview.vue';
@@ -246,6 +247,7 @@ const BASE_TABS = [
     { id: 'coproducao', label: 'Co-produção', icon: Handshake },
     { id: 'afiliados', label: 'Afiliados', icon: Users },
     { id: 'member_builder', label: 'Member Builder', icon: LayoutGrid, linkOnly: true },
+    { id: 'reembolso', label: 'Reembolso', icon: RotateCcw, showForType: 'area_membros' },
 ];
 
 const props = defineProps({
@@ -305,6 +307,33 @@ const currentTab = computed(() => {
 
 function setTab(tabId) {
     router.get(`/produtos/${props.produto.id}/edit?tab=${tabId}`, {}, { preserveState: true });
+}
+
+function tabIsVisible(tab) {
+    if (tab.linkOnly) {
+        return false;
+    }
+    if (tab.showWhen && props.produto.billing_type !== tab.showWhen) {
+        return false;
+    }
+    if (tab.showForType && props.produto.type !== tab.showForType) {
+        return false;
+    }
+
+    return true;
+}
+
+const refundInitial = props.produto.member_area_refund ?? props.produto.member_area_config?.refund ?? {};
+const refundForm = useForm({
+    enabled: Boolean(refundInitial.enabled),
+    days: Math.min(365, Math.max(1, Number(refundInitial.days) || 7)),
+    mode: refundInitial.mode === 'auto' ? 'auto' : 'manual',
+});
+
+function saveRefundConfig() {
+    refundForm.put(`/produtos/${props.produto.id}/member-area-refund`, {
+        preserveScroll: true,
+    });
 }
 
 function goToMemberBuilder() {
@@ -1361,7 +1390,7 @@ function submit() {
                         {{ tab.label }}
                     </a>
                     <button
-                        v-else-if="!tab.linkOnly && (!tab.showWhen || produto.billing_type === tab.showWhen)"
+                        v-else-if="tabIsVisible(tab)"
                         type="button"
                         :class="[
                             'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
@@ -1398,7 +1427,7 @@ function submit() {
                     {{ tab.label }}
                 </a>
                 <button
-                    v-else-if="!tab.linkOnly && (!tab.showWhen || produto.billing_type === tab.showWhen)"
+                    v-else-if="tabIsVisible(tab)"
                     type="button"
                     :ref="currentTab === tab.id ? activeTabRef : undefined"
                     :class="[
@@ -3482,6 +3511,64 @@ function submit() {
                 <Handshake class="mx-auto h-12 w-12 text-zinc-400 dark:text-zinc-500" />
                 <p class="mt-3 text-center font-medium text-zinc-600 dark:text-zinc-400">Co-produção</p>
                 <p class="mt-1 text-center text-sm text-zinc-500 dark:text-zinc-500">Esta funcionalidade será implementada em breve.</p>
+            </div>
+        </template>
+
+        <!-- Aba Reembolso (área de membros) -->
+        <template v-if="currentTab === 'reembolso' && produto.type === 'area_membros'">
+            <div class="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/50">
+                <h2 class="text-base font-semibold text-zinc-900 dark:text-white">Reembolso na área de membros</h2>
+                <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    Permite que o aluno solicite reembolso pelo menu da conta no header da área de membros.
+                    Aprovações e histórico ficam em <strong>Reembolsos</strong> no menu do painel.
+                </p>
+                <div class="mt-6 flex items-center justify-between gap-4 border-t border-zinc-100 pt-5 dark:border-zinc-700">
+                    <label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Habilitar solicitação de reembolso</label>
+                    <Toggle v-model="refundForm.enabled" />
+                </div>
+                <div v-if="refundForm.enabled" class="mt-6 space-y-5 border-t border-zinc-100 pt-5 dark:border-zinc-700">
+                    <div>
+                        <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Prazo (dias após liberação do acesso)</label>
+                        <input
+                            v-model.number="refundForm.days"
+                            type="number"
+                            min="1"
+                            max="365"
+                            class="mt-1 w-full max-w-[120px] rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                        />
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Modo de processamento</p>
+                        <div class="mt-2 space-y-2">
+                            <label class="flex cursor-pointer items-start gap-2">
+                                <input v-model="refundForm.mode" type="radio" value="auto" class="mt-1" />
+                                <span>
+                                    <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Automático</span>
+                                    <span class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                                        Estorno imediato via API apenas para pagamentos PIX na CajuPay. Cartão e outros gateways entram em fila manual.
+                                    </span>
+                                </span>
+                            </label>
+                            <label class="flex cursor-pointer items-start gap-2">
+                                <input v-model="refundForm.mode" type="radio" value="manual" class="mt-1" />
+                                <span>
+                                    <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Aprovação manual</span>
+                                    <span class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                                        Solicitações aparecem no menu Reembolsos do painel para você aprovar ou rejeitar.
+                                    </span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-8 flex items-center gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-700">
+                    <Button type="button" :disabled="refundForm.processing" @click="saveRefundConfig">
+                        {{ refundForm.processing ? 'Salvando…' : 'Salvar' }}
+                    </Button>
+                    <p v-if="refundForm.hasErrors" class="text-sm text-red-600 dark:text-red-400">
+                        Verifique os campos e tente novamente.
+                    </p>
+                </div>
             </div>
         </template>
 

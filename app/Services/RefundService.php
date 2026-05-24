@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\OrderRefunded;
 use App\Gateways\CajuPay\CajuPayDriver;
 use App\Models\GatewayCredential;
 use App\Models\Order;
@@ -282,6 +283,157 @@ class RefundService
         return $order->gateway === 'cajupay' && $order->isCajuPayPixPayment();
     }
 
+    /**
+     * @return array{can: bool, message: string|null, auto_cajupay_pix: bool}
+     */
+    public function canRefundFromPanel(Order $order): array
+    {
+        if ($order->status === 'refunded') {
+            return [
+                'can' => false,
+                'message' => 'Este pedido já foi reembolsado.',
+                'auto_cajupay_pix' => false,
+            ];
+        }
+
+        if ($order->status !== 'completed') {
+            return [
+                'can' => false,
+                'message' => 'Só é possível reembolsar pedidos pagos.',
+                'auto_cajupay_pix' => false,
+            ];
+        }
+
+        if (! $order->product_id) {
+            return [
+                'can' => false,
+                'message' => 'Pedido sem produto vinculado.',
+                'auto_cajupay_pix' => false,
+            ];
+        }
+
+        try {
+            $this->resolveBuyerUserId($order);
+        } catch (ValidationException $e) {
+            $message = collect($e->errors())->flatten()->first() ?? 'Comprador não identificado no pedido.';
+
+            return [
+                'can' => false,
+                'message' => $message,
+                'auto_cajupay_pix' => false,
+            ];
+        }
+
+        $existing = RefundRequest::query()->where('order_id', $order->id)->first();
+        if ($existing && $this->existingRefundBlocksPanelRetry($existing)) {
+            return [
+                'can' => false,
+                'message' => 'Já existe uma solicitação de reembolso para este pedido.',
+                'auto_cajupay_pix' => false,
+            ];
+        }
+
+        $autoPix = $this->canExecuteCajuPayPixRefund($order)
+            && $this->cajuPayDriver->resolvePaymentIdForOrder($order) !== null;
+
+        return [
+            'can' => true,
+            'message' => null,
+            'auto_cajupay_pix' => $autoPix,
+        ];
+    }
+
+    /**
+     * Reembolso iniciado pelo painel de vendas (admin).
+     *
+     * @return array{refund_request: RefundRequest, message: string, auto_cajupay_pix: bool}
+     */
+    public function initiateRefundFromPanel(Order $order, User $admin, ?string $adminNotes = null): array
+    {
+        $this->clearStaleRefundRequestForRetry($order);
+
+        $check = $this->canRefundFromPanel($order);
+        if (! $check['can']) {
+            throw ValidationException::withMessages([
+                'order' => [$check['message'] ?? 'Não é possível reembolsar este pedido.'],
+            ]);
+        }
+
+        $buyerUserId = $this->resolveBuyerUserId($order);
+        $paymentId = $this->cajuPayDriver->resolvePaymentIdForOrder($order);
+        $clientRefundId = 'getfy-order-'.$order->id.'-refund';
+
+        $refundRequest = RefundRequest::create([
+            'tenant_id' => $order->tenant_id,
+            'order_id' => $order->id,
+            'user_id' => $buyerUserId,
+            'product_id' => $order->product_id,
+            'reason' => 'Reembolso iniciado pelo painel de vendas.',
+            'status' => RefundRequest::STATUS_PROCESSING,
+            'mode' => RefundRequest::MODE_MANUAL,
+            'gateway' => $order->gateway,
+            'cajupay_payment_id' => $paymentId,
+            'client_refund_id' => $clientRefundId,
+            'reviewed_by' => $admin->id,
+            'reviewed_at' => now(),
+            'admin_notes' => $adminNotes,
+        ]);
+
+        if ($this->canExecuteCajuPayPixRefund($order) && $paymentId) {
+            try {
+                $this->executeCajuPayPixRefund($refundRequest);
+            } catch (\Throwable $e) {
+                $refundRequest->update([
+                    'status' => RefundRequest::STATUS_FAILED,
+                    'failure_reason' => $e->getMessage(),
+                ]);
+                throw ValidationException::withMessages([
+                    'gateway' => [$this->friendlyGatewayRefundMessage($e)],
+                ]);
+            }
+
+            return [
+                'refund_request' => $refundRequest->fresh(),
+                'message' => 'Reembolso PIX enviado à CajuPay. O pedido será atualizado quando o gateway confirmar.',
+                'auto_cajupay_pix' => true,
+            ];
+        }
+
+        if ($order->gateway === 'cajupay') {
+            $extra = $this->canExecuteCajuPayPixRefund($order) && ! $paymentId
+                ? ' Não foi possível localizar o payment_id CajuPay automaticamente.'
+                : ' Estorne no painel CajuPay; confirmação via webhook.';
+            $note = trim(($adminNotes ?? '').$extra);
+            $refundRequest->update([
+                'status' => RefundRequest::STATUS_PROCESSING,
+                'admin_notes' => $note !== '' ? $note : null,
+            ]);
+
+            $message = $this->canExecuteCajuPayPixRefund($order) && ! $paymentId
+                ? 'Reembolso registrado, mas o ID do pagamento CajuPay não foi encontrado. Efetue o estorno PIX manualmente no painel CajuPay.'
+                : 'Reembolso registrado. Efetue o estorno no painel CajuPay (cartão/outros). O acesso será revogado ao confirmar o webhook.';
+
+            return [
+                'refund_request' => $refundRequest->fresh(),
+                'message' => $message,
+                'auto_cajupay_pix' => false,
+            ];
+        }
+
+        $order->update(['status' => 'refunded']);
+        event(new OrderRefunded($order));
+        $refundRequest->update([
+            'status' => RefundRequest::STATUS_COMPLETED,
+            'completed_at' => now(),
+        ]);
+
+        return [
+            'refund_request' => $refundRequest->fresh(),
+            'message' => 'Pedido marcado como reembolsado e acesso do aluno revogado.',
+            'auto_cajupay_pix' => false,
+        ];
+    }
+
     private function findEligibleOrder(Product $product, User $user): ?Order
     {
         return Order::query()
@@ -324,5 +476,73 @@ class RefundService
             'status_label' => RefundRequest::statusLabel($request->status),
             'created_at' => $request->created_at?->toIso8601String(),
         ];
+    }
+
+    private function existingRefundBlocksPanelRetry(RefundRequest $existing): bool
+    {
+        if (in_array($existing->status, [
+            RefundRequest::STATUS_FAILED,
+            RefundRequest::STATUS_REJECTED,
+            RefundRequest::STATUS_CANCELLED,
+        ], true)) {
+            return false;
+        }
+
+        return $existing->isOpen() || $existing->status === RefundRequest::STATUS_COMPLETED;
+    }
+
+    private function clearStaleRefundRequestForRetry(Order $order): void
+    {
+        $existing = RefundRequest::query()->where('order_id', $order->id)->first();
+        if (! $existing || $this->existingRefundBlocksPanelRetry($existing)) {
+            return;
+        }
+
+        $existing->delete();
+    }
+
+    private function resolveBuyerUserId(Order $order): int
+    {
+        if ($order->user_id) {
+            return (int) $order->user_id;
+        }
+
+        $email = strtolower(trim((string) ($order->email ?? '')));
+        if ($email === '') {
+            throw ValidationException::withMessages([
+                'order' => ['Pedido sem comprador vinculado. Informe o e-mail do comprador antes de reembolsar.'],
+            ]);
+        }
+
+        $user = User::query()
+            ->whereRaw('LOWER(email) = ?', [$email])
+            ->when($order->tenant_id, fn ($q) => $q->where('tenant_id', $order->tenant_id))
+            ->first();
+
+        if (! $user) {
+            throw ValidationException::withMessages([
+                'order' => ['Comprador não encontrado pelo e-mail do pedido.'],
+            ]);
+        }
+
+        return (int) $user->id;
+    }
+
+    private function friendlyGatewayRefundMessage(\Throwable $e): string
+    {
+        $message = trim($e->getMessage());
+        if ($message === '') {
+            return 'Não foi possível processar o reembolso no gateway. Tente novamente ou estorne manualmente no painel CajuPay.';
+        }
+
+        if (str_contains($message, 'payment_id')) {
+            return 'Não foi possível identificar o pagamento na CajuPay. Confirme se o webhook de pagamento foi recebido ou estorne manualmente no painel CajuPay.';
+        }
+
+        if (str_starts_with($message, 'CajuPay reembolso:')) {
+            return $message;
+        }
+
+        return $message;
     }
 }

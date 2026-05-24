@@ -4,12 +4,12 @@ namespace Tests\Feature;
 
 use App\Events\OrderRefunded;
 use App\Http\Middleware\EnsureInstalled;
+use App\Models\User;
 use App\Jobs\ProcessPaymentWebhook;
 use App\Models\GatewayCredential;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\RefundRequest;
-use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -143,5 +143,64 @@ class RefundFlowTest extends TestCase
             'product_id' => $product->id,
             'status' => RefundRequest::STATUS_PENDING,
         ]);
+    }
+
+    public function test_vendas_refund_resolves_buyer_by_email_when_order_user_id_null(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        $tenantId = 1;
+        $admin = User::factory()->create(['tenant_id' => $tenantId, 'role' => User::ROLE_INFOPRODUTOR]);
+        $buyer = User::factory()->create(['tenant_id' => $tenantId, 'role' => User::ROLE_ALUNO]);
+        $product = $this->createTestProduct(['name' => 'Curso', 'type' => Product::TYPE_AREA_MEMBROS]);
+
+        $order = Order::create([
+            'tenant_id' => $tenantId,
+            'user_id' => null,
+            'product_id' => $product->id,
+            'amount' => 50,
+            'currency' => 'BRL',
+            'email' => $buyer->email,
+            'status' => 'completed',
+            'gateway' => 'manual',
+        ]);
+
+        $response = $this->actingAs($admin)->postJson("/vendas/{$order->id}/refund");
+
+        $response->assertOk()->assertJsonPath('success', true);
+        $this->assertDatabaseHas('refund_requests', [
+            'order_id' => $order->id,
+            'user_id' => $buyer->id,
+            'status' => RefundRequest::STATUS_COMPLETED,
+        ]);
+    }
+
+    public function test_vendas_refund_marks_non_cajupay_order_refunded(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        $tenantId = 1;
+        $admin = User::factory()->create(['tenant_id' => $tenantId, 'role' => User::ROLE_INFOPRODUTOR]);
+        $buyer = User::factory()->create(['tenant_id' => $tenantId, 'role' => User::ROLE_ALUNO]);
+        $product = $this->createTestProduct(['name' => 'Curso', 'type' => Product::TYPE_AREA_MEMBROS]);
+        $product->users()->attach($buyer->id);
+
+        $order = Order::create([
+            'tenant_id' => $tenantId,
+            'user_id' => $buyer->id,
+            'product_id' => $product->id,
+            'amount' => 99,
+            'currency' => 'BRL',
+            'email' => $buyer->email,
+            'status' => 'completed',
+            'gateway' => 'manual',
+        ]);
+
+        $response = $this->actingAs($admin)->postJson("/vendas/{$order->id}/refund");
+
+        $response->assertOk()->assertJsonPath('success', true);
+        $order->refresh();
+        $this->assertSame('refunded', $order->status);
+        $this->assertFalse($product->users()->where('user_id', $buyer->id)->exists());
     }
 }
