@@ -23,6 +23,9 @@ class Subscription extends Model
         'saved_payment_method_id',
         'gateway_subscription_id',
         'renewal_token',
+        'cancelled_at',
+        'last_reminder_sent_on',
+        'past_due_at',
     ];
 
     protected function casts(): array
@@ -30,6 +33,9 @@ class Subscription extends Model
         return [
             'current_period_start' => 'date',
             'current_period_end' => 'date',
+            'cancelled_at' => 'datetime',
+            'last_reminder_sent_on' => 'date',
+            'past_due_at' => 'datetime',
         ];
     }
 
@@ -82,5 +88,20 @@ class Subscription extends Model
     public function scopeActive($query)
     {
         return $query->where('status', self::STATUS_ACTIVE);
+    }
+
+    public function scopePastDue($query)
+    {
+        return $query->where('status', self::STATUS_PAST_DUE);
+    }
+
+    public function scopeCancelled($query)
+    {
+        return $query->where('status', self::STATUS_CANCELLED);
+    }
+
+    public function scopeNotCancelled($query)
+    {
+        return $query->where('status', '!=', self::STATUS_CANCELLED);
     }
 }

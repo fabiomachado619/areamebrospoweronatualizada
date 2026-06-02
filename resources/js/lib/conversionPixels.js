@@ -34,11 +34,12 @@ export function newGaEntry() {
 }
 
 export const DEFAULT_CONVERSION_PIXELS = {
-    meta: { enabled: false, entries: [] },
-    tiktok: { enabled: false, entries: [] },
-    google_ads: { enabled: false, entries: [] },
-    google_analytics: { enabled: false, entries: [] },
+    meta: { enabled: false, entries: [], integration_ids: [] },
+    tiktok: { enabled: false, entries: [], integration_ids: [] },
+    google_ads: { enabled: false, entries: [], integration_ids: [] },
+    google_analytics: { enabled: false, entries: [], integration_ids: [] },
     custom_script: [],
+    custom_script_integration_ids: [],
 };
 
 export const PIXEL_TABS = [
@@ -47,6 +48,14 @@ export const PIXEL_TABS = [
     { id: 'google_ads', label: 'Google Ads', image: '/images/pixels/googleads.png' },
     { id: 'google_analytics', label: 'Google Analytics', image: '/images/pixels/google-analytics.png' },
     { id: 'custom_script', label: 'Script personalizado', image: '/images/pixels/script.png' },
+];
+
+/** Layout assimétrico do card em Integrações (sem script — só ads/analytics). */
+export const PIXEL_CARD_LOGOS = [
+    { id: 'tiktok', image: '/images/pixels/tiktok.png', left: 14, top: 72, rotate: -22, scale: 0.82, z: 2 },
+    { id: 'google_ads', image: '/images/pixels/googleads.png', left: 34, top: 58, rotate: -11, scale: 0.9, z: 3 },
+    { id: 'meta', image: '/images/pixels/meta.png', left: 58, top: 36, rotate: 4, scale: 1.14, z: 5 },
+    { id: 'google_analytics', image: '/images/pixels/google-analytics.png', left: 86, top: 26, rotate: 18, scale: 0.86, z: 4 },
 ];
 
 export function mergeConversionPixels(raw) {
@@ -142,22 +151,44 @@ export function mergeConversionPixels(raw) {
         return { enabled, entries: [] };
     }
 
+    function attachPlatformExtras(block, normalized) {
+        const result = { ...normalized };
+        if (Array.isArray(block?.integration_ids)) {
+            result.integration_ids = block.integration_ids
+                .map((id) => parseInt(id, 10))
+                .filter((id) => !Number.isNaN(id));
+        }
+        for (const key of ['fire_purchase_on_pix', 'fire_purchase_on_boleto', 'disable_order_bump_events']) {
+            if (block && Object.prototype.hasOwnProperty.call(block, key)) {
+                result[key] = !!block[key];
+            } else if (normalized.entries?.[0] && Object.prototype.hasOwnProperty.call(normalized.entries[0], key)) {
+                result[key] = !!normalized.entries[0][key];
+            }
+        }
+        return result;
+    }
+
     if (raw.meta && typeof raw.meta === 'object') {
-        out.meta = normalizeMetaLike(raw.meta, newMetaEntry);
+        out.meta = attachPlatformExtras(raw.meta, normalizeMetaLike(raw.meta, newMetaEntry));
     }
     if (raw.tiktok && typeof raw.tiktok === 'object') {
-        out.tiktok = normalizeMetaLike(raw.tiktok, newTiktokEntry);
+        out.tiktok = attachPlatformExtras(raw.tiktok, normalizeMetaLike(raw.tiktok, newTiktokEntry));
     }
     if (raw.google_ads && typeof raw.google_ads === 'object') {
-        out.google_ads = normalizeGoogleAdsBlock(raw.google_ads);
+        out.google_ads = attachPlatformExtras(raw.google_ads, normalizeGoogleAdsBlock(raw.google_ads));
     }
     if (raw.google_analytics && typeof raw.google_analytics === 'object') {
-        out.google_analytics = normalizeGaBlock(raw.google_analytics);
+        out.google_analytics = attachPlatformExtras(raw.google_analytics, normalizeGaBlock(raw.google_analytics));
     }
     out.custom_script = Array.isArray(raw.custom_script)
         ? raw.custom_script
               .filter((s) => s && typeof s === 'object')
               .map((s) => ({ id: s.id || randomClientId(), name: s.name || '', script: s.script || '' }))
+        : [];
+    out.custom_script_integration_ids = Array.isArray(raw.custom_script_integration_ids)
+        ? raw.custom_script_integration_ids
+              .map((id) => parseInt(id, 10))
+              .filter((id) => !Number.isNaN(id))
         : [];
 
     return out;

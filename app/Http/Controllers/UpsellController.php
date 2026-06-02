@@ -153,7 +153,7 @@ class UpsellController extends Controller
         if ($orderId > 0) {
             $order = Order::with('product', 'orderItems')->find($orderId);
             if ($order && $order->product) {
-                $conversionPixels = $order->product->conversion_pixels ?? $conversionPixels;
+                $conversionPixels = $order->resolvedConversionPixels();
                 $orderAmount = (float) $order->lineItemsTotalAmount();
                 $orderCurrency = $order->getCurrencyOrDefault();
                 $purchaseContents = MetaPurchaseTracking::purchaseContentsFromOrder($order, false);
@@ -298,8 +298,7 @@ class UpsellController extends Controller
         $defaults = Product::defaultCheckoutConfig();
         $page = array_replace_recursive($defaults['upsell']['page'] ?? [], $upsell['page'] ?? []);
 
-        $product = $order->product;
-        $conversionPixels = $product ? ($product->conversion_pixels ?? Product::defaultConversionPixels()) : Product::defaultConversionPixels();
+        $conversionPixels = $order->resolvedConversionPixels();
 
         return Inertia::render('Checkout/Upsell', [
             'token' => $token,
@@ -375,8 +374,7 @@ class UpsellController extends Controller
         $defaults = Product::defaultCheckoutConfig();
         $page = array_replace_recursive($defaults['downsell']['page'] ?? [], $downsell['page'] ?? []);
 
-        $product = $order->product;
-        $conversionPixels = $product ? ($product->conversion_pixels ?? Product::defaultConversionPixels()) : Product::defaultConversionPixels();
+        $conversionPixels = $order->resolvedConversionPixels();
 
         return Inertia::render('Checkout/Downsell', [
             'token' => $token,

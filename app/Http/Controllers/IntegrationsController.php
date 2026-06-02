@@ -7,6 +7,8 @@ use App\Models\GatewayCredential;
 use App\Models\Product;
 use App\Models\Setting;
 use App\Models\CademiIntegration;
+use App\Models\ConversionPixelIntegration;
+use App\Services\LegacyConversionPixelsMigrator;
 use App\Models\SpedyIntegration;
 use App\Models\UtmifyIntegration;
 use App\Models\ApiApplication;
@@ -137,6 +139,20 @@ class IntegrationsController extends Controller
         $products = Product::forTenant($tenantId)->orderBy('name')->get(['id', 'name']);
         $apiApplications = ApiApplication::forTenant($tenantId)->orderBy('name')->get(['id', 'name']);
 
+        $migrator = app(LegacyConversionPixelsMigrator::class);
+        if (! $migrator->tenantIsMigrated($tenantId) || $migrator->tenantHasLegacyInlinePixels($tenantId)) {
+            $migrator->migrateTenant($tenantId);
+        }
+
+        $conversionPixelIntegrations = ConversionPixelIntegration::forTenant($tenantId)
+            ->with('products:id,name')
+            ->orderBy('platform')
+            ->orderBy('name')
+            ->get()
+            ->map(fn (ConversionPixelIntegration $i) => ConversionPixelIntegrationController::integrationToArray($i))
+            ->values()
+            ->all();
+
         return Inertia::render('Integrations/Index', [
             'gateways' => $gateways,
             'gateway_order' => $gatewayOrder,
@@ -148,6 +164,7 @@ class IntegrationsController extends Controller
             'products' => $products,
             'api_applications' => $apiApplications,
             'plugin_apps' => $pluginApps,
+            'conversion_pixel_integrations' => $conversionPixelIntegrations,
         ]);
     }
 

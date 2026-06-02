@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { Link, usePage } from '@inertiajs/vue3';
 import {
     LayoutDashboard,
@@ -137,6 +137,33 @@ function isActive(href) {
 
 /** Prefetch hover + mousedown para navegação do painel (Inertia v2). */
 const panelNavPrefetch = ['hover', 'click'];
+
+const showCollapsedTooltip = computed(() => !isMobile.value && !isExpanded.value && !isMobileOpen.value);
+
+const flyout = ref({
+    visible: false,
+    label: '',
+    beta: false,
+    top: 0,
+    left: 0,
+});
+
+function openFlyout(event, item) {
+    if (!showCollapsedTooltip.value || item.separator) return;
+    const el = event.currentTarget;
+    const rect = el.getBoundingClientRect();
+    flyout.value = {
+        visible: true,
+        label: item.name,
+        beta: !!item.beta,
+        top: rect.top + rect.height / 2,
+        left: rect.right + 10,
+    };
+}
+
+function closeFlyout() {
+    flyout.value.visible = false;
+}
 </script>
 
 <template>
@@ -225,7 +252,7 @@ const panelNavPrefetch = ['hover', 'click'];
             </button>
         </div>
         <hr class="mx-3 border-t border-zinc-200 dark:border-zinc-700" />
-        <nav class="flex-1 overflow-y-auto no-scrollbar px-3 py-4">
+        <nav class="flex-1 overflow-y-auto no-scrollbar px-3 py-4" @mouseleave="closeFlyout">
             <ul class="flex flex-col gap-1">
                 <template v-for="(item, index) in navItems" :key="item.separator ? `sep-${index}` : (item.href ?? index)">
                     <li v-if="item.separator">
@@ -235,11 +262,15 @@ const panelNavPrefetch = ['hover', 'click'];
                         <Link
                             :href="item.href"
                             :prefetch="panelNavPrefetch"
+                            :aria-label="showCollapsedTooltip ? item.name : undefined"
                             :class="[
-                                'menu-item group',
+                                'menu-item',
                                 showText() ? 'justify-start' : 'lg:justify-center',
                                 isActive(item.href) ? 'menu-item-active' : 'menu-item-inactive',
                             ]"
+                            @mouseenter="openFlyout($event, item)"
+                            @focus="openFlyout($event, item)"
+                            @blur="closeFlyout"
                         >
                             <span
                                 :class="[
@@ -266,5 +297,21 @@ const panelNavPrefetch = ['hover', 'click'];
             <PwaInstallButton />
             <ConquistasWidget variant="sidebar" />
         </div>
+
+        <Teleport to="body">
+            <div
+                v-if="flyout.visible"
+                class="pointer-events-none fixed z-[100001] flex -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-xl border border-zinc-200/90 bg-white px-3 py-2 text-sm font-medium text-zinc-900 shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:border-zinc-600/90 dark:bg-zinc-800 dark:text-zinc-50 dark:shadow-black/40"
+                :style="{ top: `${flyout.top}px`, left: `${flyout.left}px` }"
+                role="tooltip"
+            >
+                <span
+                    class="absolute right-full top-1/2 -translate-y-1/2 border-[6px] border-transparent border-r-white dark:border-r-zinc-800"
+                    aria-hidden="true"
+                />
+                <span>{{ flyout.label }}</span>
+                <BetaBadge v-if="flyout.beta" size="xs" />
+            </div>
+        </Teleport>
     </aside>
 </template>

@@ -40,8 +40,7 @@ import {
 } from 'lucide-vue-next';
 import axios from 'axios';
 import EmailTemplatePreview from '@/components/produtos/EmailTemplatePreview.vue';
-import ConversionPixelsForm from '@/components/produtos/ConversionPixelsForm.vue';
-import { mergeConversionPixels } from '@/lib/conversionPixels';
+import ProductConversionPixelsInfo from '@/components/produtos/ProductConversionPixelsInfo.vue';
 
 function getCsrfToken() {
     const match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
@@ -117,6 +116,7 @@ const props = defineProps({
     billingTypes: { type: Array, default: () => [] },
     exchange_rates: { type: Object, default: () => ({ brl_eur: 0.16, brl_usd: 0.18 }) },
     cademi_integrations: { type: Array, default: () => [] },
+    product_pixel_integrations: { type: Array, default: () => [] },
     gateways_by_method: {
         type: Object,
         default: () => ({ pix: [], card: [], boleto: [], pix_auto: [], apple_pay: [], google_pay: [], crypto: [] }),
@@ -251,6 +251,13 @@ const checkoutForceInitial = {
     currency: checkoutForceFromProduto.currency ? String(checkoutForceFromProduto.currency).toUpperCase() : 'BRL',
 };
 
+const subscriptionFromProduto = props.produto.checkout_config?.subscription ?? {};
+const subscriptionInitial = {
+    grace_period_days: Number(subscriptionFromProduto.grace_period_days ?? 0),
+    notify_days_before: Number(subscriptionFromProduto.notify_days_before ?? 3),
+    renewal_window_days: Number(subscriptionFromProduto.renewal_window_days ?? 7),
+};
+
 function buildCustomPricesAmountsInitial() {
     const raw = props.produto.checkout_config?.custom_prices_by_currency?.amounts;
     const out = {};
@@ -282,7 +289,6 @@ const form = useForm({
     currency: props.produto.currency ?? 'BRL',
     is_active: props.produto.is_active,
     image: null,
-    conversion_pixels: mergeConversionPixels(props.produto.conversion_pixels),
     deliverable_link: props.produto.checkout_config?.deliverable_link ?? '',
     payment_gateways: {
         pix: pg.pix ?? '',
@@ -314,6 +320,7 @@ const form = useForm({
     cart_recovery_email: cartRecoveryInitial,
     pagarme_billing: pagarmeBillingInitial,
     checkout_force: { ...checkoutForceInitial },
+    subscription: { ...subscriptionInitial },
     custom_prices_by_currency: {
         enabled: Boolean(props.produto.checkout_config?.custom_prices_by_currency?.enabled),
         amounts: buildCustomPricesAmountsInitial(),
@@ -650,6 +657,7 @@ const editingBump = ref(null);
 const bumpForm = useForm({
     target_product_id: '',
     target_product_offer_id: '',
+    target_subscription_plan_id: '',
     title: '',
     description: '',
     price_override: '',
@@ -660,11 +668,24 @@ const selectedBumpProduct = computed(() => {
     if (!id) return null;
     return (props.produto.available_products_for_bump || []).find((p) => p.id === id);
 });
+function bumpProductOptionLabel(p) {
+    const currency = p.currency || 'BRL';
+    const price = Number(p.price ?? 0).toFixed(2);
+    if (p.billing_type === 'subscription') {
+        return `${p.name} (Assinatura) — ${currency} ${price}`;
+    }
+    return `${p.name} — ${currency} ${price}`;
+}
+function onBumpProductChange() {
+    bumpForm.target_product_offer_id = '';
+    bumpForm.target_subscription_plan_id = '';
+}
 function openNewOrderBump() {
     editingBump.value = null;
     bumpForm.reset();
     bumpForm.target_product_id = '';
     bumpForm.target_product_offer_id = '';
+    bumpForm.target_subscription_plan_id = '';
     bumpForm.title = '';
     bumpForm.description = '';
     bumpForm.price_override = '';
@@ -675,6 +696,7 @@ function openEditOrderBump(bump) {
     editingBump.value = bump;
     bumpForm.target_product_id = bump.target_product_id;
     bumpForm.target_product_offer_id = bump.target_product_offer_id != null ? String(bump.target_product_offer_id) : '';
+    bumpForm.target_subscription_plan_id = bump.target_subscription_plan_id != null ? String(bump.target_subscription_plan_id) : '';
     bumpForm.title = bump.title;
     bumpForm.description = bump.description ?? '';
     bumpForm.price_override = bump.price_override != null ? String(bump.price_override) : '';
@@ -690,6 +712,7 @@ function submitOrderBump() {
     const payload = {
         target_product_id: bumpForm.target_product_id,
         target_product_offer_id: bumpForm.target_product_offer_id || null,
+        target_subscription_plan_id: bumpForm.target_subscription_plan_id || null,
         title: bumpForm.title,
         description: bumpForm.description || null,
         price_override: bumpForm.price_override ? parseFloat(bumpForm.price_override) : null,
@@ -1131,7 +1154,6 @@ function submit() {
         }
         fd.append('currency', form.currency);
         fd.append('is_active', form.is_active ? '1' : '0');
-        fd.append('conversion_pixels', JSON.stringify(form.conversion_pixels));
         // Envia texto simples; o backend monta o HTML bonito automaticamente.
         const cre = form.cart_recovery_email && typeof form.cart_recovery_email === 'object' ? form.cart_recovery_email : {};
         const creStages = cre?.stages && typeof cre.stages === 'object' ? cre.stages : {};
@@ -1190,6 +1212,11 @@ function submit() {
             fd.append('email_template[body_html]', '');
         }
         fd.append('deliverable_link', form.deliverable_link || '');
+        if (form.billing_type === 'subscription' && form.subscription) {
+            fd.append('subscription[grace_period_days]', String(Math.max(0, form.subscription.grace_period_days ?? 0)));
+            fd.append('subscription[notify_days_before]', String(Math.max(0, form.subscription.notify_days_before ?? 3)));
+            fd.append('subscription[renewal_window_days]', String(Math.max(0, form.subscription.renewal_window_days ?? 7)));
+        }
         fd.append('checkout_force[enabled]', form.checkout_force?.enabled ? '1' : '0');
         if (form.checkout_force?.enabled) {
             fd.append('checkout_force[locale]', form.checkout_force.locale || '');
@@ -1221,6 +1248,13 @@ function submit() {
         form.transform((data) => {
             if (data.billing_type === 'subscription') {
                 data.base_interval = data.base_interval || 'monthly';
+                data.subscription = {
+                    grace_period_days: Math.max(0, Number(data.subscription?.grace_period_days ?? 0)),
+                    notify_days_before: Math.max(0, Number(data.subscription?.notify_days_before ?? 3)),
+                    renewal_window_days: Math.max(0, Number(data.subscription?.renewal_window_days ?? 7)),
+                };
+            } else {
+                delete data.subscription;
             }
             return data;
         }).put(url);
@@ -1479,6 +1513,50 @@ function submit() {
                                     <option value="lifetime">Vitalício</option>
                                 </select>
                                 <p class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Intervalo da cobrança recorrente do preço base.</p>
+                            </div>
+                            <div
+                                v-if="form.billing_type === 'subscription'"
+                                class="rounded-xl border border-zinc-200/80 bg-zinc-50/50 p-4 dark:border-zinc-600/80 dark:bg-zinc-900/20 sm:col-span-2"
+                            >
+                                <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Assinatura e renovação</h3>
+                                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                    Lembretes por e-mail com link de renovação. O cliente paga manualmente em /renovar.
+                                </p>
+                                <div class="mt-4 grid gap-4 sm:grid-cols-3">
+                                    <div>
+                                        <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Carência (dias após vencer)</label>
+                                        <input
+                                            v-model.number="form.subscription.grace_period_days"
+                                            type="number"
+                                            min="0"
+                                            max="365"
+                                            :class="inputClass"
+                                        />
+                                        <p class="mt-1 text-[11px] text-zinc-500">Acesso continua após o vencimento.</p>
+                                    </div>
+                                    <div>
+                                        <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Avisar antes (dias)</label>
+                                        <input
+                                            v-model.number="form.subscription.notify_days_before"
+                                            type="number"
+                                            min="0"
+                                            max="90"
+                                            :class="inputClass"
+                                        />
+                                        <p class="mt-1 text-[11px] text-zinc-500">1 e-mail por dia até renovar.</p>
+                                    </div>
+                                    <div>
+                                        <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Janela de renovação (dias)</label>
+                                        <input
+                                            v-model.number="form.subscription.renewal_window_days"
+                                            type="number"
+                                            min="0"
+                                            max="365"
+                                            :class="inputClass"
+                                        />
+                                        <p class="mt-1 text-[11px] text-zinc-500">Dias após vencer em que o link /renovar funciona.</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -2507,10 +2585,12 @@ function submit() {
                 <section class="panel-table">
                     <div class="border-b border-zinc-200/80 bg-gradient-to-r from-zinc-50/90 to-zinc-100/50 px-6 py-5 dark:from-zinc-800/80 dark:to-zinc-800/50">
                         <h2 class="text-base font-semibold text-zinc-900 dark:text-white">Pixels de conversão</h2>
-                        <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Configure pixels para rastrear conversões no checkout, upsell e downsell.</p>
+                        <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                            Pixels vinculados a este produto (configurados em Integrações).
+                        </p>
                     </div>
                     <div class="p-6">
-                        <ConversionPixelsForm v-model="form.conversion_pixels" />
+                        <ProductConversionPixelsInfo :integrations="product_pixel_integrations" />
                     </div>
                 </section>
                 <div class="flex flex-wrap items-center gap-3">
@@ -2797,6 +2877,7 @@ function submit() {
                                         required
                                         :class="inputClass"
                                         class="w-full"
+                                        @change="onBumpProductChange"
                                     >
                                         <option value="">Selecione o produto</option>
                                         <option
@@ -2804,16 +2885,25 @@ function submit() {
                                             :key="p.id"
                                             :value="p.id"
                                         >
-                                            {{ p.name }} — {{ p.currency }} {{ Number(p.price).toFixed(2) }}
+                                            {{ bumpProductOptionLabel(p) }}
                                         </option>
                                     </select>
                                 </div>
-                                <div v-if="selectedBumpProduct && selectedBumpProduct.offers && selectedBumpProduct.offers.length">
+                                <div v-if="selectedBumpProduct && selectedBumpProduct.billing_type !== 'subscription' && selectedBumpProduct.offers && selectedBumpProduct.offers.length">
                                     <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Oferta (opcional)</label>
                                     <select v-model="bumpForm.target_product_offer_id" :class="inputClass" class="w-full">
                                         <option value="">Preço base do produto</option>
                                         <option v-for="o in selectedBumpProduct.offers" :key="o.id" :value="o.id">
                                             {{ o.name }} — {{ o.currency }} {{ Number(o.price).toFixed(2) }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div v-if="selectedBumpProduct && selectedBumpProduct.billing_type === 'subscription' && selectedBumpProduct.subscription_plans && selectedBumpProduct.subscription_plans.length">
+                                    <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Plano (opcional)</label>
+                                    <select v-model="bumpForm.target_subscription_plan_id" :class="inputClass" class="w-full">
+                                        <option value="">Menor preço entre os planos</option>
+                                        <option v-for="pl in selectedBumpProduct.subscription_plans" :key="pl.id" :value="pl.id">
+                                            {{ pl.name }} — {{ pl.currency }} {{ Number(pl.price).toFixed(2) }}
                                         </option>
                                     </select>
                                 </div>

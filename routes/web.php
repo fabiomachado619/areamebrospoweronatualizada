@@ -475,6 +475,9 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
     Route::get('/vendas/assinaturas', [\App\Http\Controllers\AssinaturasController::class, 'index'])
         ->middleware('team.permission:vendas.view')
         ->name('assinaturas.index');
+    Route::post('/vendas/assinaturas/{subscription}/cancel', [\App\Http\Controllers\AssinaturasController::class, 'cancel'])
+        ->middleware('team.permission:vendas.manage')
+        ->name('assinaturas.cancel');
     Route::get('/relatorios', [\App\Http\Controllers\RelatoriosController::class, 'index'])
         ->middleware('team.permission:relatorios.view')
         ->name('relatorios.index');
@@ -563,6 +566,10 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
         Route::put('/integracoes/cademi/{cademi}', [\App\Http\Controllers\CademiController::class, 'update'])->name('integrations.cademi.update');
         Route::delete('/integracoes/cademi/{cademi}', [\App\Http\Controllers\CademiController::class, 'destroy'])->name('integrations.cademi.destroy');
     Route::get('/integracoes/cademi/{cademi}/tags', [\App\Http\Controllers\CademiController::class, 'tags'])->name('integrations.cademi.tags');
+
+        Route::post('/integracoes/conversion-pixels', [\App\Http\Controllers\ConversionPixelIntegrationController::class, 'store'])->name('integrations.conversion-pixels.store');
+        Route::put('/integracoes/conversion-pixels/{conversionPixelIntegration}', [\App\Http\Controllers\ConversionPixelIntegrationController::class, 'update'])->name('integrations.conversion-pixels.update');
+        Route::delete('/integracoes/conversion-pixels/{conversionPixelIntegration}', [\App\Http\Controllers\ConversionPixelIntegrationController::class, 'destroy'])->name('integrations.conversion-pixels.destroy');
 
         Route::get('/integracoes/webhooks', [\App\Http\Controllers\WebhookController::class, 'index'])->name('integrations.webhooks.index');
         Route::post('/integracoes/webhooks', [\App\Http\Controllers\WebhookController::class, 'store'])->name('integrations.webhooks.store');

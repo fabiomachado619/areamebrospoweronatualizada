@@ -254,6 +254,7 @@ class Product extends Model
                 'custom_body_end_html' => '',
                 'custom_js' => '',
             ],
+            'subscription' => static::defaultSubscriptionSettings(),
             'cart_recovery_email' => [
                 'enabled' => false,
                 'stages' => [
@@ -285,6 +286,35 @@ class Product extends Model
      *
      * @return array{logo_url: string, from_name: string, subject: string, body_text: string, body_html: string}
      */
+    /**
+     * Configuração de renovação para produtos com billing_type = subscription.
+     *
+     * @return array{grace_period_days: int, notify_days_before: int, renewal_window_days: int}
+     */
+    public static function defaultSubscriptionSettings(): array
+    {
+        return [
+            'grace_period_days' => 0,
+            'notify_days_before' => 3,
+            'renewal_window_days' => 7,
+        ];
+    }
+
+    /**
+     * @return array{grace_period_days: int, notify_days_before: int, renewal_window_days: int}
+     */
+    public function subscriptionSettings(): array
+    {
+        $config = $this->checkout_config;
+        $raw = is_array($config['subscription'] ?? null) ? $config['subscription'] : [];
+
+        return [
+            'grace_period_days' => max(0, (int) ($raw['grace_period_days'] ?? static::defaultSubscriptionSettings()['grace_period_days'])),
+            'notify_days_before' => max(0, (int) ($raw['notify_days_before'] ?? static::defaultSubscriptionSettings()['notify_days_before'])),
+            'renewal_window_days' => max(0, (int) ($raw['renewal_window_days'] ?? static::defaultSubscriptionSettings()['renewal_window_days'])),
+        ];
+    }
+
     public static function defaultEmailTemplate(): array
     {
         return [
@@ -324,7 +354,7 @@ class Product extends Model
      */
     public static function defaultConversionPixels(): array
     {
-        $emptyPlatform = ['enabled' => false, 'entries' => []];
+        $emptyPlatform = ['enabled' => false, 'entries' => [], 'integration_ids' => []];
 
         return [
             'meta' => $emptyPlatform,
@@ -348,9 +378,10 @@ class Product extends Model
         $entries = [];
 
         $hasEntriesKey = array_key_exists('entries', $block) && is_array($block['entries']);
+        $entriesList = $hasEntriesKey ? $block['entries'] : [];
 
-        if ($hasEntriesKey) {
-            foreach ($block['entries'] as $e) {
+        if ($hasEntriesKey && $entriesList !== []) {
+            foreach ($entriesList as $e) {
                 if (! is_array($e)) {
                     continue;
                 }
@@ -435,10 +466,18 @@ class Product extends Model
             }
         }
 
-        return [
+        $result = [
             'enabled' => $enabled,
             'entries' => array_values($entries),
         ];
+        if (isset($block['integration_ids']) && is_array($block['integration_ids'])) {
+            $result['integration_ids'] = array_values(array_filter(array_map(
+                fn ($id) => is_numeric($id) ? (int) $id : null,
+                $block['integration_ids']
+            )));
+        }
+
+        return $result;
     }
 
     public function getConversionPixelsAttribute(mixed $value): array
@@ -453,6 +492,14 @@ class Product extends Model
         }
         if (! isset($stored['custom_script']) || ! is_array($stored['custom_script'])) {
             $stored['custom_script'] = [];
+        }
+        if (! isset($stored['custom_script_integration_ids']) || ! is_array($stored['custom_script_integration_ids'])) {
+            $stored['custom_script_integration_ids'] = [];
+        } else {
+            $stored['custom_script_integration_ids'] = array_values(array_filter(array_map(
+                fn ($id) => is_numeric($id) ? (int) $id : null,
+                $stored['custom_script_integration_ids']
+            )));
         }
 
         return $stored;
@@ -651,6 +698,11 @@ class Product extends Model
         if (($user->isAdmin() || $user->isInfoprodutor()) && $user->tenant_id === $this->tenant_id) {
             return true;
         }
+
+        if ($this->billing_type === self::BILLING_SUBSCRIPTION) {
+            return app(\App\Services\SubscriptionAccessService::class)->userHasSubscriptionAccess($user, $this);
+        }
+
         return $this->users()->where('user_id', $user->id)->exists();
     }
 

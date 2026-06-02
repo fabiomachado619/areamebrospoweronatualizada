@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Events\OrderCompleted;
+use App\Events\SubscriptionRenewed;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductAffiliate;
@@ -541,22 +542,42 @@ class VendasController extends Controller
 
             if ($order->subscription_plan_id && $order->subscriptionPlan) {
                 $plan = $order->subscriptionPlan;
-                $exists = Subscription::where('user_id', $order->user_id)
-                    ->where('product_id', $order->product_id)
-                    ->where('subscription_plan_id', $plan->id)
-                    ->where('status', Subscription::STATUS_ACTIVE)
-                    ->exists();
-                if (! $order->is_renewal && ! $exists) {
-                    [$periodStart, $periodEnd] = $plan->getCurrentPeriod();
-                    Subscription::create([
-                        'tenant_id' => $order->tenant_id,
-                        'user_id' => $order->user_id,
-                        'product_id' => $order->product_id,
-                        'subscription_plan_id' => $plan->id,
-                        'status' => Subscription::STATUS_ACTIVE,
-                        'current_period_start' => $periodStart,
-                        'current_period_end' => $periodEnd,
-                    ]);
+                if ($order->is_renewal) {
+                    $sub = Subscription::where('user_id', $order->user_id)
+                        ->where('product_id', $order->product_id)
+                        ->where('subscription_plan_id', $plan->id)
+                        ->whereIn('status', [Subscription::STATUS_ACTIVE, Subscription::STATUS_PAST_DUE])
+                        ->first();
+                    if ($sub) {
+                        [$periodStart, $periodEnd] = $order->period_start && $order->period_end
+                            ? [$order->period_start, $order->period_end]
+                            : $plan->getCurrentPeriod();
+                        $sub->update([
+                            'status' => Subscription::STATUS_ACTIVE,
+                            'current_period_start' => $periodStart,
+                            'current_period_end' => $periodEnd,
+                            'past_due_at' => null,
+                        ]);
+                        event(new SubscriptionRenewed($sub->fresh()));
+                    }
+                } else {
+                    $exists = Subscription::where('user_id', $order->user_id)
+                        ->where('product_id', $order->product_id)
+                        ->where('subscription_plan_id', $plan->id)
+                        ->where('status', Subscription::STATUS_ACTIVE)
+                        ->exists();
+                    if (! $exists) {
+                        [$periodStart, $periodEnd] = $plan->getCurrentPeriod();
+                        Subscription::create([
+                            'tenant_id' => $order->tenant_id,
+                            'user_id' => $order->user_id,
+                            'product_id' => $order->product_id,
+                            'subscription_plan_id' => $plan->id,
+                            'status' => Subscription::STATUS_ACTIVE,
+                            'current_period_start' => $periodStart,
+                            'current_period_end' => $periodEnd,
+                        ]);
+                    }
                 }
             }
         } catch (\Throwable $e) {

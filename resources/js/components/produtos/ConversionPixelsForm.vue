@@ -12,12 +12,42 @@ import {
     newGaEntry,
     randomClientId,
 } from '@/lib/conversionPixels';
+import PixelIntegrationPicker from '@/components/produtos/PixelIntegrationPicker.vue';
+import { Link } from '@inertiajs/vue3';
 
 const model = defineModel({ type: Object, required: true });
 
-defineProps({
+const props = defineProps({
     disabled: { type: Boolean, default: false },
+    availableIntegrations: { type: Object, default: () => ({}) },
 });
+
+function scriptIntegrations() {
+    return props.availableIntegrations?.custom_script || [];
+}
+
+function usesScriptIntegrations() {
+    return Array.isArray(model.value.custom_script_integration_ids) && model.value.custom_script_integration_ids.length > 0;
+}
+
+function toggleScriptIntegration(id, checked) {
+    if (!Array.isArray(model.value.custom_script_integration_ids)) {
+        model.value.custom_script_integration_ids = [];
+    }
+    const numId = Number(id);
+    if (checked) {
+        if (!model.value.custom_script_integration_ids.includes(numId)) {
+            model.value.custom_script_integration_ids.push(numId);
+        }
+        model.value.custom_script = [];
+    } else {
+        model.value.custom_script_integration_ids = model.value.custom_script_integration_ids.filter((x) => x !== numId);
+    }
+}
+
+function isScriptIntegrationSelected(id) {
+    return (model.value.custom_script_integration_ids || []).map(Number).includes(Number(id));
+}
 
 const selectedPixelTab = ref('meta');
 
@@ -68,6 +98,17 @@ const inputClass =
                 </div>
             </div>
             <template v-if="model.meta.enabled">
+                <PixelIntegrationPicker
+                    platform="meta"
+                    :block="model.meta"
+                    :integrations="availableIntegrations?.meta || []"
+                    :disabled="disabled"
+                />
+                <details v-if="!(model.meta.integration_ids?.length)" class="rounded-xl border border-zinc-200 dark:border-zinc-700">
+                    <summary class="cursor-pointer px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                        Configuração manual (avançado)
+                    </summary>
+                    <div class="space-y-3 border-t border-zinc-200 p-4 dark:border-zinc-700">
                 <div v-for="(item, idx) in model.meta.entries" :key="item.id" class="panel-card-sm space-y-3 dark:bg-zinc-800">
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400">Pixel {{ idx + 1 }}</span>
@@ -104,6 +145,8 @@ const inputClass =
                 <p v-if="model.meta.entries.length === 0" class="text-sm text-zinc-500 dark:text-zinc-400">
                     Nenhum pixel. Clique em «Adicionar pixel» ou desative a integração.
                 </p>
+                    </div>
+                </details>
             </template>
         </div>
 
@@ -124,6 +167,17 @@ const inputClass =
                 </div>
             </div>
             <template v-if="model.tiktok.enabled">
+                <PixelIntegrationPicker
+                    platform="tiktok"
+                    :block="model.tiktok"
+                    :integrations="availableIntegrations?.tiktok || []"
+                    :disabled="disabled"
+                />
+                <details v-if="!(model.tiktok.integration_ids?.length)" class="rounded-xl border border-zinc-200 dark:border-zinc-700">
+                    <summary class="cursor-pointer px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                        Configuração manual (avançado)
+                    </summary>
+                    <div class="space-y-3 border-t border-zinc-200 p-4 dark:border-zinc-700">
                 <div v-for="(item, idx) in model.tiktok.entries" :key="item.id" class="panel-card-sm space-y-3 dark:bg-zinc-800">
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400">Pixel {{ idx + 1 }}</span>
@@ -160,6 +214,8 @@ const inputClass =
                 <p v-if="model.tiktok.entries.length === 0" class="text-sm text-zinc-500 dark:text-zinc-400">
                     Nenhum pixel. Clique em «Adicionar pixel» ou desative a integração.
                 </p>
+                    </div>
+                </details>
             </template>
         </div>
 
@@ -180,6 +236,17 @@ const inputClass =
                 </div>
             </div>
             <template v-if="model.google_ads.enabled">
+                <PixelIntegrationPicker
+                    platform="google_ads"
+                    :block="model.google_ads"
+                    :integrations="availableIntegrations?.google_ads || []"
+                    :disabled="disabled"
+                />
+                <details v-if="!(model.google_ads.integration_ids?.length)" class="rounded-xl border border-zinc-200 dark:border-zinc-700">
+                    <summary class="cursor-pointer px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                        Configuração manual (avançado)
+                    </summary>
+                    <div class="space-y-3 border-t border-zinc-200 p-4 dark:border-zinc-700">
                 <div v-for="(item, idx) in model.google_ads.entries" :key="item.id" class="panel-card-sm space-y-3 dark:bg-zinc-800">
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400">Conversão {{ idx + 1 }}</span>
@@ -209,6 +276,8 @@ const inputClass =
                 <p v-if="model.google_ads.entries.length === 0" class="text-sm text-zinc-500 dark:text-zinc-400">
                     Nenhuma conversão. Clique em «Adicionar conversão» ou desative a integração.
                 </p>
+                    </div>
+                </details>
             </template>
         </div>
 
@@ -229,6 +298,17 @@ const inputClass =
                 </div>
             </div>
             <template v-if="model.google_analytics.enabled">
+                <PixelIntegrationPicker
+                    platform="google_analytics"
+                    :block="model.google_analytics"
+                    :integrations="availableIntegrations?.google_analytics || []"
+                    :disabled="disabled"
+                />
+                <details v-if="!(model.google_analytics.integration_ids?.length)" class="rounded-xl border border-zinc-200 dark:border-zinc-700">
+                    <summary class="cursor-pointer px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                        Configuração manual (avançado)
+                    </summary>
+                    <div class="space-y-3 border-t border-zinc-200 p-4 dark:border-zinc-700">
                 <div
                     v-for="(item, idx) in model.google_analytics.entries"
                     :key="item.id"
@@ -258,6 +338,8 @@ const inputClass =
                 <p v-if="model.google_analytics.entries.length === 0" class="text-sm text-zinc-500 dark:text-zinc-400">
                     Nenhuma propriedade. Clique em «Adicionar propriedade» ou desative a integração.
                 </p>
+                    </div>
+                </details>
             </template>
         </div>
 
@@ -265,15 +347,43 @@ const inputClass =
             <div class="flex items-center justify-between">
                 <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Scripts personalizados</h3>
                 <Button
+                    v-if="!usesScriptIntegrations()"
                     type="button"
                     variant="outline"
                     size="sm"
                     :disabled="disabled"
                     @click="model.custom_script.push({ id: randomClientId(), name: '', script: '' })"
                 >
-                    <Plus class="mr-1 h-4 w-4" /> Adicionar pixel
+                    <Plus class="mr-1 h-4 w-4" /> Adicionar script manual
                 </Button>
             </div>
+            <div class="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/50 p-4 dark:border-zinc-700 dark:bg-zinc-800/30">
+                <p class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Integrações cadastradas</p>
+                <p v-if="scriptIntegrations().length === 0" class="text-sm text-zinc-500">
+                    <Link href="/integracoes" class="text-[var(--color-primary)] underline">Cadastrar em Integrações</Link>
+                </p>
+                <div v-else class="space-y-2">
+                    <label
+                        v-for="item in scriptIntegrations()"
+                        :key="item.id"
+                        class="flex cursor-pointer items-start gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-600 dark:bg-zinc-900"
+                    >
+                        <input
+                            type="checkbox"
+                            class="mt-1 rounded border-zinc-300"
+                            :checked="isScriptIntegrationSelected(item.id)"
+                            :disabled="disabled"
+                            @change="toggleScriptIntegration(item.id, $event.target.checked)"
+                        />
+                        <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ item.name }}</span>
+                    </label>
+                </div>
+            </div>
+            <details v-if="!usesScriptIntegrations()" class="rounded-xl border border-zinc-200 dark:border-zinc-700">
+                <summary class="cursor-pointer px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                    Scripts manuais (avançado)
+                </summary>
+                <div class="space-y-3 border-t border-zinc-200 p-4 dark:border-zinc-700">
             <div v-for="(item, idx) in model.custom_script" :key="item.id" class="panel-card-sm space-y-3 dark:bg-zinc-800">
                 <div class="flex items-center gap-2">
                     <input v-model="item.name" type="text" placeholder="Nome (opcional)" :class="inputClass + ' flex-1'" :disabled="disabled" />
@@ -297,6 +407,8 @@ const inputClass =
             <p v-if="model.custom_script.length === 0" class="text-sm text-zinc-500 dark:text-zinc-400">
                 Nenhum script adicionado.
             </p>
+                </div>
+            </details>
         </div>
     </div>
 </template>

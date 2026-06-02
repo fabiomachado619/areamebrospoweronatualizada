@@ -210,6 +210,7 @@ class ProdutosController extends Controller
                 'id' => $b->id,
                 'target_product_id' => $b->target_product_id,
                 'target_product_offer_id' => $b->target_product_offer_id,
+                'target_subscription_plan_id' => $b->target_subscription_plan_id,
                 'target_name' => $target?->name,
                 'target_image_url' => $imageUrl,
                 'title' => $b->title,
@@ -224,25 +225,39 @@ class ProdutosController extends Controller
         $tenantId = auth()->user()->tenant_id;
         $availableForBump = Product::forTenant($tenantId)
             ->where('id', '!=', $produto->id)
-            ->where('billing_type', Product::BILLING_ONE_TIME)
             ->where('is_active', true)
             ->orderBy('name')
-            ->with('offers')
+            ->with(['offers', 'subscriptionPlans'])
             ->get();
-        $produtoArray['available_products_for_bump'] = $availableForBump->map(function (Product $p) use ($tenantCurrencies) {
+        $produtoArray['available_products_for_bump'] = $availableForBump->map(function (Product $p) {
             $imageUrl = $p->image ? app(StorageService::class)->url($p->image) : null;
+            $currency = $p->currency ?? 'BRL';
+            $plans = $p->subscriptionPlans->map(fn ($plan) => [
+                'id' => $plan->id,
+                'name' => $plan->name,
+                'price' => (float) $plan->price,
+                'currency' => $plan->getCurrencyOrDefault(),
+                'interval' => $plan->interval,
+            ])->values()->all();
+            $displayPrice = (float) $p->price;
+            if ($p->billing_type === Product::BILLING_SUBSCRIPTION && $plans !== []) {
+                $displayPrice = min(array_column($plans, 'price'));
+            }
+
             return [
                 'id' => $p->id,
                 'name' => $p->name,
+                'billing_type' => $p->billing_type ?? Product::BILLING_ONE_TIME,
                 'image_url' => $imageUrl,
-                'price' => (float) $p->price,
-                'currency' => $p->currency ?? 'BRL',
+                'price' => $displayPrice,
+                'currency' => $currency,
                 'offers' => $p->offers->map(fn ($o) => [
                     'id' => $o->id,
                     'name' => $o->name,
                     'price' => (float) $o->price,
-                    'currency' => $o->currency ?? $p->currency ?? 'BRL',
+                    'currency' => $o->currency ?? $currency,
                 ])->values()->all(),
+                'subscription_plans' => $plans,
             ];
         })->values()->all();
 
@@ -328,6 +343,24 @@ class ProdutosController extends Controller
 
         $produtoArray['member_area_refund'] = $produto->memberAreaRefundConfig();
 
+        $productPixelIntegrations = \App\Models\ConversionPixelIntegration::forTenant($produto->tenant_id)
+            ->active()
+            ->with('products:id')
+            ->orderBy('platform')
+            ->orderBy('name')
+            ->get()
+            ->filter(fn (\App\Models\ConversionPixelIntegration $i) => $i->appliesToProduct((string) $produto->id))
+            ->map(fn (\App\Models\ConversionPixelIntegration $i) => [
+                'id' => $i->id,
+                'platform' => $i->platform,
+                'name' => $i->name,
+                'summary' => $i->summaryLabel(),
+                'is_active' => (bool) $i->is_active,
+                'configured' => $i->hasConfiguredCredentials(),
+            ])
+            ->values()
+            ->all();
+
         return Inertia::render('Produtos/Edit', [
             'produto' => $produtoArray,
             'productTypes' => $productTypes,
@@ -336,6 +369,7 @@ class ProdutosController extends Controller
             'tenant_currencies' => $tenantCurrencies,
             'gateways_by_method' => $gatewaysByMethod,
             'cademi_integrations' => $cademiIntegrations,
+            'product_pixel_integrations' => $productPixelIntegrations,
             'plugin_product_panels' => PluginRegistry::getProductPanels(),
             'layoutContentFlushLeft' => true,
             'pageTitleBadge' => $produto->name,
@@ -468,6 +502,11 @@ class ProdutosController extends Controller
             'conversion_pixels.meta.entries.*.fire_purchase_on_pix' => ['nullable', 'boolean'],
             'conversion_pixels.meta.entries.*.fire_purchase_on_boleto' => ['nullable', 'boolean'],
             'conversion_pixels.meta.entries.*.disable_order_bump_events' => ['nullable', 'boolean'],
+            'conversion_pixels.meta.integration_ids' => ['nullable', 'array'],
+            'conversion_pixels.meta.integration_ids.*' => ['integer'],
+            'conversion_pixels.meta.fire_purchase_on_pix' => ['nullable', 'boolean'],
+            'conversion_pixels.meta.fire_purchase_on_boleto' => ['nullable', 'boolean'],
+            'conversion_pixels.meta.disable_order_bump_events' => ['nullable', 'boolean'],
             'conversion_pixels.tiktok' => ['nullable', 'array'],
             'conversion_pixels.tiktok.enabled' => ['nullable', 'boolean'],
             'conversion_pixels.tiktok.entries' => ['nullable', 'array'],
@@ -477,6 +516,11 @@ class ProdutosController extends Controller
             'conversion_pixels.tiktok.entries.*.fire_purchase_on_pix' => ['nullable', 'boolean'],
             'conversion_pixels.tiktok.entries.*.fire_purchase_on_boleto' => ['nullable', 'boolean'],
             'conversion_pixels.tiktok.entries.*.disable_order_bump_events' => ['nullable', 'boolean'],
+            'conversion_pixels.tiktok.integration_ids' => ['nullable', 'array'],
+            'conversion_pixels.tiktok.integration_ids.*' => ['integer'],
+            'conversion_pixels.tiktok.fire_purchase_on_pix' => ['nullable', 'boolean'],
+            'conversion_pixels.tiktok.fire_purchase_on_boleto' => ['nullable', 'boolean'],
+            'conversion_pixels.tiktok.disable_order_bump_events' => ['nullable', 'boolean'],
             'conversion_pixels.google_ads' => ['nullable', 'array'],
             'conversion_pixels.google_ads.enabled' => ['nullable', 'boolean'],
             'conversion_pixels.google_ads.entries' => ['nullable', 'array'],
@@ -486,6 +530,11 @@ class ProdutosController extends Controller
             'conversion_pixels.google_ads.entries.*.fire_purchase_on_pix' => ['nullable', 'boolean'],
             'conversion_pixels.google_ads.entries.*.fire_purchase_on_boleto' => ['nullable', 'boolean'],
             'conversion_pixels.google_ads.entries.*.disable_order_bump_events' => ['nullable', 'boolean'],
+            'conversion_pixels.google_ads.integration_ids' => ['nullable', 'array'],
+            'conversion_pixels.google_ads.integration_ids.*' => ['integer'],
+            'conversion_pixels.google_ads.fire_purchase_on_pix' => ['nullable', 'boolean'],
+            'conversion_pixels.google_ads.fire_purchase_on_boleto' => ['nullable', 'boolean'],
+            'conversion_pixels.google_ads.disable_order_bump_events' => ['nullable', 'boolean'],
             'conversion_pixels.google_analytics' => ['nullable', 'array'],
             'conversion_pixels.google_analytics.enabled' => ['nullable', 'boolean'],
             'conversion_pixels.google_analytics.entries' => ['nullable', 'array'],
@@ -494,7 +543,14 @@ class ProdutosController extends Controller
             'conversion_pixels.google_analytics.entries.*.fire_purchase_on_pix' => ['nullable', 'boolean'],
             'conversion_pixels.google_analytics.entries.*.fire_purchase_on_boleto' => ['nullable', 'boolean'],
             'conversion_pixels.google_analytics.entries.*.disable_order_bump_events' => ['nullable', 'boolean'],
+            'conversion_pixels.google_analytics.integration_ids' => ['nullable', 'array'],
+            'conversion_pixels.google_analytics.integration_ids.*' => ['integer'],
+            'conversion_pixels.google_analytics.fire_purchase_on_pix' => ['nullable', 'boolean'],
+            'conversion_pixels.google_analytics.fire_purchase_on_boleto' => ['nullable', 'boolean'],
+            'conversion_pixels.google_analytics.disable_order_bump_events' => ['nullable', 'boolean'],
             'conversion_pixels.custom_script' => ['nullable', 'array'],
+            'conversion_pixels.custom_script_integration_ids' => ['nullable', 'array'],
+            'conversion_pixels.custom_script_integration_ids.*' => ['integer'],
             'conversion_pixels.custom_script.*.id' => ['nullable', 'string', 'max:64'],
             'conversion_pixels.custom_script.*.name' => ['nullable', 'string', 'max:255'],
             'conversion_pixels.custom_script.*.script' => ['nullable', 'string', 'max:65535'],
@@ -563,6 +619,10 @@ class ProdutosController extends Controller
             'custom_prices_by_currency' => ['nullable', 'array'],
             'custom_prices_by_currency.enabled' => ['nullable', 'boolean'],
             'custom_prices_by_currency.amounts' => ['nullable', 'array'],
+            'subscription' => ['nullable', 'array'],
+            'subscription.grace_period_days' => ['nullable', 'integer', 'min:0', 'max:365'],
+            'subscription.notify_days_before' => ['nullable', 'integer', 'min:0', 'max:90'],
+            'subscription.renewal_window_days' => ['nullable', 'integer', 'min:0', 'max:365'],
         ]);
         $validated['is_active'] = $request->boolean('is_active', true);
         $validated['currency'] = $validated['currency'] ?? config('products.currency_default', 'BRL');
@@ -571,6 +631,8 @@ class ProdutosController extends Controller
         unset($validated['checkout_force']);
         $customPricesInput = array_key_exists('custom_prices_by_currency', $validated) ? $validated['custom_prices_by_currency'] : null;
         unset($validated['custom_prices_by_currency']);
+        $subscriptionInput = array_key_exists('subscription', $validated) ? $validated['subscription'] : null;
+        unset($validated['subscription']);
 
         if (is_array($checkoutForceInput) && ! empty($checkoutForceInput['enabled'])) {
             $loc = isset($checkoutForceInput['locale']) ? trim((string) $checkoutForceInput['locale']) : '';
@@ -687,22 +749,7 @@ class ProdutosController extends Controller
         }
 
         if ($request->has('conversion_pixels')) {
-            $merged = [];
-            foreach (['meta', 'tiktok', 'google_ads', 'google_analytics'] as $key) {
-                $raw = is_array($conversionPixels[$key] ?? null) ? $conversionPixels[$key] : [];
-                $merged[$key] = Product::normalizeConversionPixelBlock($raw, $key);
-            }
-            $merged['custom_script'] = [];
-            foreach ($conversionPixels['custom_script'] ?? [] as $item) {
-                if (! empty($item['script'] ?? '')) {
-                    $merged['custom_script'][] = [
-                        'id' => $item['id'] ?? Str::uuid()->toString(),
-                        'name' => $item['name'] ?? '',
-                        'script' => $item['script'],
-                    ];
-                }
-            }
-            $produto->update(['conversion_pixels' => $merged]);
+            $produto->update(['conversion_pixels' => $this->mergeConversionPixelsForSave($conversionPixels, $produto->tenant_id)]);
         }
 
         $config = is_array($produto->checkout_config) ? $produto->checkout_config : [];
@@ -788,6 +835,15 @@ class ProdutosController extends Controller
                 $config['custom_prices_by_currency']['amounts'] = [];
             }
             $config['custom_prices_by_currency'] = array_replace_recursive($defCp, $config['custom_prices_by_currency']);
+            $configUpdated = true;
+        }
+        if ($request->has('subscription') && $produto->billing_type === Product::BILLING_SUBSCRIPTION) {
+            $sub = is_array($subscriptionInput) ? $subscriptionInput : [];
+            $config['subscription'] = [
+                'grace_period_days' => max(0, (int) ($sub['grace_period_days'] ?? 0)),
+                'notify_days_before' => max(0, (int) ($sub['notify_days_before'] ?? 3)),
+                'renewal_window_days' => max(0, (int) ($sub['renewal_window_days'] ?? 7)),
+            ];
             $configUpdated = true;
         }
         if ($configUpdated) {
@@ -963,6 +1019,7 @@ class ProdutosController extends Controller
         $validated = $request->validate([
             'target_product_id' => ['required', 'string', 'exists:products,id'],
             'target_product_offer_id' => ['nullable', 'integer', 'exists:product_offers,id'],
+            'target_subscription_plan_id' => ['nullable', 'integer', 'exists:subscription_plans,id'],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:65535'],
             'price_override' => ['nullable', 'numeric', 'min:0'],
@@ -972,14 +1029,12 @@ class ProdutosController extends Controller
         if (! $target || $target->id === $produto->id) {
             return back()->with('error', 'Produto inválido para order bump.');
         }
-        if (! empty($validated['target_product_offer_id'])) {
-            $offer = ProductOffer::where('id', $validated['target_product_offer_id'])->where('product_id', $target->id)->first();
-            if (! $offer) {
-                return back()->with('error', 'Oferta não pertence ao produto selecionado.');
-            }
+        if ($error = $this->validateOrderBumpTargetSelection($target, $validated)) {
+            return back()->with('error', $error);
         }
         $validated['product_id'] = $produto->id;
         $validated['target_product_offer_id'] = $validated['target_product_offer_id'] ?? null;
+        $validated['target_subscription_plan_id'] = $validated['target_subscription_plan_id'] ?? null;
         $validated['price_override'] = isset($validated['price_override']) ? (float) $validated['price_override'] : null;
         $maxPosition = $produto->orderBumps()->max('position') ?? 0;
         $validated['position'] = $maxPosition + 1;
@@ -997,6 +1052,7 @@ class ProdutosController extends Controller
         $validated = $request->validate([
             'target_product_id' => ['required', 'string', 'exists:products,id'],
             'target_product_offer_id' => ['nullable', 'integer', 'exists:product_offers,id'],
+            'target_subscription_plan_id' => ['nullable', 'integer', 'exists:subscription_plans,id'],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:65535'],
             'price_override' => ['nullable', 'numeric', 'min:0'],
@@ -1006,13 +1062,11 @@ class ProdutosController extends Controller
         if (! $target || $target->id === $produto->id) {
             return back()->with('error', 'Produto inválido para order bump.');
         }
-        if (! empty($validated['target_product_offer_id'])) {
-            $offer = ProductOffer::where('id', $validated['target_product_offer_id'])->where('product_id', $target->id)->first();
-            if (! $offer) {
-                return back()->with('error', 'Oferta não pertence ao produto selecionado.');
-            }
+        if ($error = $this->validateOrderBumpTargetSelection($target, $validated)) {
+            return back()->with('error', $error);
         }
         $validated['target_product_offer_id'] = $validated['target_product_offer_id'] ?? null;
+        $validated['target_subscription_plan_id'] = $validated['target_subscription_plan_id'] ?? null;
         $validated['price_override'] = isset($validated['price_override']) ? (float) $validated['price_override'] : null;
         $bump->update($validated);
         return back()->with('success', 'Order bump atualizado.');
@@ -1250,6 +1304,109 @@ class ProdutosController extends Controller
         $plan = SubscriptionPlan::where('id', $validated['plan_id'])->where('product_id', $produto->id)->firstOrFail();
         $plan->update(['checkout_slug' => null]);
         return redirect()->to(route('produtos.edit', $produto) . '?tab=checkout')->with('success', 'Checkout exclusivo do plano removido; ele passará a usar o checkout principal.');
+    }
+
+    /**
+     * @param  array<string, mixed>  $conversionPixels
+     * @return array<string, mixed>
+     */
+    private function mergeConversionPixelsForSave(array $conversionPixels, ?int $tenantId): array
+    {
+        $merged = [];
+        foreach (['meta', 'tiktok', 'google_ads', 'google_analytics'] as $key) {
+            $raw = is_array($conversionPixels[$key] ?? null) ? $conversionPixels[$key] : [];
+            $integrationIds = $this->validatedPixelIntegrationIds($raw['integration_ids'] ?? [], $key, $tenantId);
+            $normalized = Product::normalizeConversionPixelBlock($raw, $key);
+            if ($integrationIds !== []) {
+                $normalized['integration_ids'] = $integrationIds;
+            }
+            foreach (['fire_purchase_on_pix', 'fire_purchase_on_boleto', 'disable_order_bump_events'] as $flagKey) {
+                if (array_key_exists($flagKey, $raw)) {
+                    $normalized[$flagKey] = filter_var($raw[$flagKey], FILTER_VALIDATE_BOOLEAN);
+                }
+            }
+            $merged[$key] = $normalized;
+        }
+
+        $merged['custom_script'] = [];
+        foreach ($conversionPixels['custom_script'] ?? [] as $item) {
+            if (! empty($item['script'] ?? '')) {
+                $merged['custom_script'][] = [
+                    'id' => $item['id'] ?? Str::uuid()->toString(),
+                    'name' => $item['name'] ?? '',
+                    'script' => $item['script'],
+                ];
+            }
+        }
+
+        $merged['custom_script_integration_ids'] = $this->validatedPixelIntegrationIds(
+            $conversionPixels['custom_script_integration_ids'] ?? [],
+            \App\Models\ConversionPixelIntegration::PLATFORM_CUSTOM_SCRIPT,
+            $tenantId
+        );
+
+        return $merged;
+    }
+
+    /**
+     * @param  array<int|string, mixed>  $ids
+     * @return list<int>
+     */
+    private function validatedPixelIntegrationIds(array $ids, string $platform, ?int $tenantId): array
+    {
+        $normalized = array_values(array_unique(array_filter(array_map(
+            fn ($id) => is_numeric($id) ? (int) $id : null,
+            $ids
+        ))));
+
+        if ($normalized === []) {
+            return [];
+        }
+
+        $valid = \App\Models\ConversionPixelIntegration::query()
+            ->forTenant($tenantId)
+            ->where('platform', $platform)
+            ->whereIn('id', $normalized)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return array_values(array_intersect($normalized, $valid));
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     */
+    private function validateOrderBumpTargetSelection(Product $target, array $validated): ?string
+    {
+        $offerId = $validated['target_product_offer_id'] ?? null;
+        $planId = $validated['target_subscription_plan_id'] ?? null;
+
+        if ($offerId && $planId) {
+            return 'Selecione apenas oferta ou plano, não ambos.';
+        }
+
+        if ($offerId) {
+            $offer = ProductOffer::where('id', $offerId)->where('product_id', $target->id)->first();
+            if (! $offer) {
+                return 'Oferta não pertence ao produto selecionado.';
+            }
+            if ($target->billing_type === Product::BILLING_SUBSCRIPTION) {
+                return 'Ofertas não se aplicam a produtos de assinatura. Selecione um plano.';
+            }
+        }
+
+        if ($planId) {
+            $plan = SubscriptionPlan::where('id', $planId)->where('product_id', $target->id)->first();
+            if (! $plan) {
+                return 'Plano não pertence ao produto selecionado.';
+            }
+            if ($target->billing_type !== Product::BILLING_SUBSCRIPTION) {
+                return 'Planos só se aplicam a produtos de assinatura.';
+            }
+        }
+
+        return null;
     }
 
     /**

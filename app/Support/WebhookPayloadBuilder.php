@@ -112,6 +112,17 @@ class WebhookPayloadBuilder
     public static function forSubscriptionEvent(Subscription $subscription): array
     {
         $subscription->loadMissing(['user', 'product', 'subscriptionPlan']);
+        $lifecycle = app(\App\Services\SubscriptionLifecycleService::class);
+        $accessUntil = $lifecycle->accessUntil($subscription);
+        $renewableUntil = $lifecycle->renewableUntil($subscription);
+        $periodEnd = $lifecycle->periodEnd($subscription);
+        $daysOverdue = null;
+        if ($periodEnd && $periodEnd->isPast()) {
+            $daysOverdue = (int) $periodEnd->diffInDays(now()->startOfDay(), false);
+            if ($daysOverdue < 0) {
+                $daysOverdue = 0;
+            }
+        }
 
         $slug = $subscription->subscriptionPlan?->checkout_slug
             ?? $subscription->product?->checkout_slug
@@ -137,11 +148,16 @@ class WebhookPayloadBuilder
             'subscription' => [
                 'id' => $subscription->id,
                 'status' => $subscription->status,
+                'effective_status' => $lifecycle->effectiveStatus($subscription),
                 'product_id' => $subscription->product_id,
                 'subscription_plan_id' => $subscription->subscription_plan_id,
                 'user_id' => $subscription->user_id,
                 'current_period_start' => $subscription->current_period_start?->toDateString(),
                 'current_period_end' => $subscription->current_period_end?->toDateString(),
+                'access_until' => $accessUntil?->toDateString(),
+                'renewable_until' => $renewableUntil?->toDateString(),
+                'days_overdue' => $daysOverdue,
+                'cancelled_at' => $subscription->cancelled_at?->toIso8601String(),
                 'gateway_subscription_id' => $subscription->gateway_subscription_id,
                 'created_at' => $subscription->created_at?->toIso8601String(),
                 'updated_at' => $subscription->updated_at?->toIso8601String(),

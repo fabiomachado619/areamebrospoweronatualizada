@@ -18,6 +18,7 @@ import {
     resetPagarmeTokenizeScriptState,
 } from '@/composables/usePagarmeTokenizecard.js';
 import { isIosDevice } from '@/utils/isIosDevice.js';
+import { localizePaymentMethods, paymentMethodLabel } from '@/lib/checkoutPaymentMethodLabels';
 
 const STORAGE_KEY = 'checkout_draft';
 
@@ -304,6 +305,26 @@ const checkoutPaymentMethods = computed(() => {
     }
     return list.filter((m) => m.id !== 'apple_pay');
 });
+
+/** Labels dos métodos conforme idioma ativo (checkout_translations). */
+const localizedPaymentMethods = computed(() => {
+    void props.checkoutLocale;
+    return localizePaymentMethods(checkoutPaymentMethods.value, props.t);
+});
+
+function labelForPaymentMethodId(methodId) {
+    return paymentMethodLabel(methodId, props.t);
+}
+
+function cajupayMethodUnavailableMessage(methodId) {
+    const method = labelForPaymentMethodId(methodId);
+    const example = labelForPaymentMethodId('card');
+    const template = props.t('checkout.cajupay_method_unavailable');
+    if (template && template !== 'checkout.cajupay_method_unavailable') {
+        return template.replace('{method}', method).replace('{example}', example);
+    }
+    return `${method} não está disponível para esta conta CajuPay no momento. Selecione outra forma de pagamento (ex.: ${example}).`;
+}
 
 /** Gateway do método cartão (primeiro método com id === 'card' em available_payment_methods). */
 const cardGatewaySlug = computed(() => {
@@ -1231,11 +1252,7 @@ async function ensureCajuPaySession({ silent = false } = {}) {
             cajupayMethodsAvailable.value.length > 0 &&
             data.method_supported === false
         ) {
-            const methodLabel = form.payment_method === 'apple_pay' ? 'Apple Pay'
-                : form.payment_method === 'google_pay' ? 'Google Pay'
-                : form.payment_method === 'card' ? 'Cartão'
-                : 'Esse método de pagamento';
-            cajupayError.value = `${methodLabel} não está disponível para esta conta CajuPay no momento. Selecione outra forma de pagamento (ex.: Cartão).`;
+            cajupayError.value = cajupayMethodUnavailableMessage(form.payment_method);
         }
 
         return data.token;
@@ -2801,7 +2818,7 @@ function submit() {
             <!-- Forma de pagamento (componentes por gateway em gateways/<slug>/) -->
             <CheckoutPaymentMethods
                 v-model="form.payment_method"
-                :available-payment-methods="checkoutPaymentMethods"
+                :available-payment-methods="localizedPaymentMethods"
                 :primary-color="primaryColor"
                 :t="t"
             />
@@ -2825,8 +2842,8 @@ function submit() {
                             form.payment_method === 'card'
                                 ? (t('checkout.dados_cartao') || 'Dados do cartão')
                                 : form.payment_method === 'apple_pay'
-                                    ? 'Apple Pay'
-                                    : 'Google Pay'
+                                    ? labelForPaymentMethodId('apple_pay')
+                                    : labelForPaymentMethodId('google_pay')
                         }}
                     </span>
                 </div>
@@ -2907,7 +2924,7 @@ function submit() {
                 <!-- Asaas: 2 etapas (cartão + endereço com CEP) -->
                 <div v-else-if="isCardGatewayAsaas" class="space-y-4">
                     <AsaasCard
-                        :method="checkoutPaymentMethods?.find((m) => m.id === 'card') || { id: 'card', label: 'Cartão' }"
+                        :method="localizedPaymentMethods?.find((m) => m.id === 'card') || { id: 'card', label: labelForPaymentMethodId('card') }"
                         :selected="true"
                         :primary-color="primaryColor"
                         :card-data="asaasCardData"
@@ -3355,9 +3372,9 @@ function submit() {
                                 : form.payment_method === 'boleto'
                                   ? (t('checkout.gerar_boleto') || 'Gerar boleto')
                                   : form.payment_method === 'apple_pay'
-                                    ? 'Pagar com Apple Pay'
+                                    ? (t('checkout.pagar_apple_pay') || 'Pagar com Apple Pay')
                                     : form.payment_method === 'google_pay'
-                                      ? 'Pagar com Google Pay'
+                                      ? (t('checkout.pagar_google_pay') || 'Pagar com Google Pay')
                                       : t('checkout.submit_button')
                     }}
                 </template>

@@ -345,7 +345,7 @@ class CheckoutController extends Controller
         $payload['card_installments_enabled'] = ! empty($cardInstallmentsConfig['enabled']);
         $payload['card_max_installments'] = min(12, max(1, (int) ($cardInstallmentsConfig['max'] ?? 1)));
 
-        $orderBumps = $product->orderBumps()->with(['targetProduct', 'targetProductOffer'])->get();
+        $orderBumps = $product->orderBumps()->with(['targetProduct', 'targetProductOffer', 'targetSubscriptionPlan'])->get();
         $payload['order_bumps'] = $orderBumps->map(function (ProductOrderBump $b) use ($product) {
             $target = $b->targetProduct;
             $imageUrl = $target && $target->image
@@ -784,7 +784,7 @@ class CheckoutController extends Controller
                     'order_id' => $order->id,
                     'product_id' => $bump->target_product_id,
                     'product_offer_id' => $bump->target_product_offer_id,
-                    'subscription_plan_id' => null,
+                    'subscription_plan_id' => $bump->target_subscription_plan_id,
                     'amount' => $bump->getEffectiveAmountBrl(),
                     'position' => $pos++,
                 ]);
@@ -2060,7 +2060,7 @@ class CheckoutController extends Controller
                     'order_id' => $order->id,
                     'product_id' => $bump->target_product_id,
                     'product_offer_id' => $bump->target_product_offer_id,
-                    'subscription_plan_id' => null,
+                    'subscription_plan_id' => $bump->target_subscription_plan_id,
                     'amount' => CheckoutCustomPriceByCurrency::bumpBrlToChargeCurrency(
                         $bump->getEffectiveAmountBrl(),
                         $chargeCurrency,
@@ -2241,7 +2241,7 @@ class CheckoutController extends Controller
                 'order_id' => $order->id,
                 'product_id' => $bump->target_product_id,
                 'product_offer_id' => $bump->target_product_offer_id,
-                'subscription_plan_id' => null,
+                'subscription_plan_id' => $bump->target_subscription_plan_id,
                 'amount' => $bump->getEffectiveAmountBrl(),
                 'position' => $pos++,
             ]);

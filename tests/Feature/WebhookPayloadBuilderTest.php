@@ -7,10 +7,14 @@ use App\Jobs\DispatchWebhookJob;
 use App\Models\CheckoutSession;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\Product;
 use App\Models\ProductOffer;
+use App\Models\Subscription;
+use App\Models\SubscriptionPlan;
 use App\Models\User;
 use App\Models\Webhook;
 use App\Support\WebhookPayloadBuilder;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -122,6 +126,52 @@ class WebhookPayloadBuilderTest extends TestCase
 
         $this->assertSame('google', $payload['tracking']['utm_source']);
         $this->assertSame('spring', $payload['tracking']['utm_campaign']);
+    }
+
+    public function test_subscription_payload_includes_lifecycle_fields(): void
+    {
+        $product = $this->createTestProduct([
+            'billing_type' => Product::BILLING_SUBSCRIPTION,
+            'checkout_config' => array_merge(Product::defaultCheckoutConfig(), [
+                'subscription' => [
+                    'grace_period_days' => 2,
+                    'notify_days_before' => 3,
+                    'renewal_window_days' => 7,
+                ],
+            ]),
+        ]);
+
+        $plan = SubscriptionPlan::create([
+            'product_id' => $product->id,
+            'name' => 'Mensal',
+            'price' => 50,
+            'currency' => 'BRL',
+            'interval' => SubscriptionPlan::INTERVAL_MONTHLY,
+            'checkout_slug' => SubscriptionPlan::generateUniqueCheckoutSlug(),
+            'position' => 1,
+        ]);
+
+        $user = User::factory()->create(['tenant_id' => 1, 'role' => User::ROLE_ALUNO]);
+        $periodEnd = Carbon::today()->subDays(1);
+
+        $subscription = Subscription::create([
+            'tenant_id' => 1,
+            'user_id' => $user->id,
+            'product_id' => $product->id,
+            'subscription_plan_id' => $plan->id,
+            'status' => Subscription::STATUS_PAST_DUE,
+            'current_period_start' => $periodEnd->copy()->subMonth()->toDateString(),
+            'current_period_end' => $periodEnd->toDateString(),
+            'renewal_token' => Subscription::generateRenewalToken(),
+        ]);
+
+        $payload = WebhookPayloadBuilder::forSubscriptionEvent($subscription);
+
+        $this->assertSame(Subscription::STATUS_PAST_DUE, $payload['subscription']['status']);
+        $this->assertArrayHasKey('access_until', $payload['subscription']);
+        $this->assertArrayHasKey('renewable_until', $payload['subscription']);
+        $this->assertArrayHasKey('days_overdue', $payload['subscription']);
+        $this->assertSame($periodEnd->copy()->addDays(2)->toDateString(), $payload['subscription']['access_until']);
     }
 
     public function test_dispatch_webhook_job_sends_products_array(): void

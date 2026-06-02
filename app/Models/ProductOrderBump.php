@@ -13,6 +13,7 @@ class ProductOrderBump extends Model
         'product_id',
         'target_product_id',
         'target_product_offer_id',
+        'target_subscription_plan_id',
         'title',
         'description',
         'price_override',
@@ -42,6 +43,11 @@ class ProductOrderBump extends Model
         return $this->belongsTo(ProductOffer::class, 'target_product_offer_id');
     }
 
+    public function targetSubscriptionPlan(): BelongsTo
+    {
+        return $this->belongsTo(SubscriptionPlan::class, 'target_subscription_plan_id');
+    }
+
     /**
      * Preço original em BRL (produto ou oferta alvo, sem considerar price_override).
      */
@@ -50,9 +56,22 @@ class ProductOrderBump extends Model
         if ($this->target_product_offer_id && $this->targetProductOffer) {
             $currency = $this->targetProductOffer->getCurrencyOrDefault();
             $price = (float) $this->targetProductOffer->price;
+
+            return $this->convertToBrl($price, $currency);
+        }
+        if ($this->target_subscription_plan_id && $this->targetSubscriptionPlan) {
+            $currency = $this->targetSubscriptionPlan->getCurrencyOrDefault();
+            $price = (float) $this->targetSubscriptionPlan->price;
+
             return $this->convertToBrl($price, $currency);
         }
         $target = $this->targetProduct;
+        if ($target && $target->billing_type === Product::BILLING_SUBSCRIPTION) {
+            $plan = $target->subscriptionPlans()->orderBy('position')->orderBy('price')->first();
+            if ($plan) {
+                return $this->convertToBrl((float) $plan->price, $plan->getCurrencyOrDefault());
+            }
+        }
         if (! $target) {
             return 0.0;
         }

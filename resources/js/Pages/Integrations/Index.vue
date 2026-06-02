@@ -4,10 +4,12 @@ import { router, usePage } from '@inertiajs/vue3';
 import LayoutInfoprodutor from '@/Layouts/LayoutInfoprodutor.vue';
 import Button from '@/components/ui/Button.vue';
 import AppCard from '@/components/integrations/AppCard.vue';
+import ConversionPixelsAppCard from '@/components/integrations/ConversionPixelsAppCard.vue';
 import SpedySidebar from '@/components/integrations/SpedySidebar.vue';
 import UtmifySidebar from '@/components/integrations/UtmifySidebar.vue';
 import WebhookSidebar from '@/components/integrations/WebhookSidebar.vue';
 import CademiSidebar from '@/components/integrations/CademiSidebar.vue';
+import ConversionPixelsSidebar from '@/components/integrations/ConversionPixelsSidebar.vue';
 import GatewayCard from '@/components/settings/GatewayCard.vue';
 import GatewayConfigSidebar from '@/components/settings/GatewayConfigSidebar.vue';
 import { CreditCard, Zap } from 'lucide-vue-next';
@@ -44,6 +46,11 @@ const APPS_BASE = [
         description: 'Área de membros externa. Após a compra, sincronize o aluno e conceda acesso na Cademí.',
         image: 'images/integrations/cademi.png',
     },
+    {
+        id: 'conversion_pixels',
+        name: 'Pixels e rastreamento',
+        description: 'Meta Ads, TikTok, Google Ads, Google Analytics e scripts. Reutilize nos produtos sem cadastrar de novo.',
+    },
 ];
 
 const props = defineProps({
@@ -60,6 +67,7 @@ const props = defineProps({
     products: { type: Array, default: () => [] },
     api_applications: { type: Array, default: () => [] },
     plugin_apps: { type: Array, default: () => [] },
+    conversion_pixel_integrations: { type: Array, default: () => [] },
 });
 
 const pluginPagesGlob = import.meta.glob('../../PluginPages/**/*.vue');
@@ -109,6 +117,15 @@ const APPS = computed(() =>
                 status: hasActive ? 'active' : undefined,
             };
         }
+        if (app.id === 'conversion_pixels') {
+            const hasActive = (props.conversion_pixel_integrations || []).some(
+                (i) => i.configured && i.is_active
+            );
+            return {
+                ...app,
+                status: hasActive ? 'active' : undefined,
+            };
+        }
         return app;
     }),
         ...((props.plugin_apps || []).map((p) => ({
@@ -129,6 +146,7 @@ const webhookSidebarOpen = ref(false);
 const utmifySidebarOpen = ref(false);
 const spedySidebarOpen = ref(false);
 const cademiSidebarOpen = ref(false);
+const conversionPixelsSidebarOpen = ref(false);
 const pluginSidebarOpen = ref(false);
 const selectedPluginComponentName = ref(null);
 const selectedPluginAppName = ref(null);
@@ -175,6 +193,14 @@ function closeCademiSidebar() {
     cademiSidebarOpen.value = false;
 }
 
+function openConversionPixelsSidebar() {
+    conversionPixelsSidebarOpen.value = true;
+}
+
+function closeConversionPixelsSidebar() {
+    conversionPixelsSidebarOpen.value = false;
+}
+
 function openPluginSidebar(app) {
     selectedPluginComponentName.value = app?.plugin_component || null;
     selectedPluginAppName.value = app?.name || 'Integração';
@@ -208,6 +234,10 @@ function onCademiSaved() {
     router.reload({ only: ['cademi_integrations', 'products'] });
 }
 
+function onConversionPixelsSaved() {
+    router.reload({ only: ['conversion_pixel_integrations', 'products'] });
+}
+
 function onAppClick(app) {
     if (app.id === 'webhook') {
         openWebhookSidebar();
@@ -217,6 +247,8 @@ function onAppClick(app) {
         openSpedySidebar();
     } else if (app.id === 'cademi') {
         openCademiSidebar();
+    } else if (app.id === 'conversion_pixels') {
+        openConversionPixelsSidebar();
     } else if (app.plugin) {
         openPluginSidebar(app);
     }
@@ -302,12 +334,18 @@ watch(() => page.url, () => syncGatewayFromQuery());
                     Conecte sua plataforma com sistemas externos via webhooks e outras integrações.
                 </p>
                 <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    <AppCard
-                        v-for="app in APPS"
-                        :key="app.id"
-                        :app="app"
-                        @click="onAppClick(app)"
-                    />
+                    <template v-for="app in APPS" :key="app.id">
+                        <ConversionPixelsAppCard
+                            v-if="app.id === 'conversion_pixels'"
+                            :app="app"
+                            @click="onAppClick(app)"
+                        />
+                        <AppCard
+                            v-else
+                            :app="app"
+                            @click="onAppClick(app)"
+                        />
+                    </template>
                 </div>
             </section>
         </template>
@@ -372,6 +410,13 @@ watch(() => page.url, () => syncGatewayFromQuery());
             :products="products"
             @close="closeCademiSidebar"
             @saved="onCademiSaved"
+        />
+        <ConversionPixelsSidebar
+            :open="conversionPixelsSidebarOpen"
+            :conversion_pixel_integrations="conversion_pixel_integrations"
+            :products="products"
+            @close="closeConversionPixelsSidebar"
+            @saved="onConversionPixelsSaved"
         />
 
         <!-- Plugin sidebars (ex.: AutoZap) -->

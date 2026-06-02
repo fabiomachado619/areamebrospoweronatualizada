@@ -169,9 +169,11 @@ class Order extends Model
             }
         }
 
-        return $this->product
-            ? ($this->product->conversion_pixels ?? $defaults)
-            : $defaults;
+        if (! $this->product) {
+            return $defaults;
+        }
+
+        return app(\App\Services\ConversionPixelsResolver::class)->resolve($this->product);
     }
 
     /**

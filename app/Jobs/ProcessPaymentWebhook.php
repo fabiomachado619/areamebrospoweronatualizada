@@ -111,12 +111,17 @@ class ProcessPaymentWebhook implements ShouldQueue
                         $sub = Subscription::where('user_id', $order->user_id)
                             ->where('product_id', $order->product_id)
                             ->where('subscription_plan_id', $plan->id)
-                            ->where('status', Subscription::STATUS_ACTIVE)
+                            ->whereIn('status', [Subscription::STATUS_ACTIVE, Subscription::STATUS_PAST_DUE])
                             ->first();
-                        if ($sub && $order->period_start && $order->period_end) {
+                        if ($sub) {
+                            [$periodStart, $periodEnd] = $order->period_start && $order->period_end
+                                ? [$order->period_start, $order->period_end]
+                                : $plan->getCurrentPeriod();
                             $sub->update([
-                                'current_period_start' => $order->period_start,
-                                'current_period_end' => $order->period_end,
+                                'status' => Subscription::STATUS_ACTIVE,
+                                'current_period_start' => $periodStart,
+                                'current_period_end' => $periodEnd,
+                                'past_due_at' => null,
                             ]);
                             event(new SubscriptionRenewed($sub->fresh()));
                         }

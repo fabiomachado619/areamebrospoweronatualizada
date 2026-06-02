@@ -14,6 +14,7 @@ use App\Models\Setting;
 use App\Models\Subscription;
 use App\Services\EfiPixRecorrenteService;
 use App\Services\GeoIp;
+use App\Services\SubscriptionLifecycleService;
 use App\Support\CheckoutCurrencyCatalog;
 use App\Services\PaymentService;
 use App\Support\CheckoutPaymentMethodOrder;
@@ -26,15 +27,22 @@ use Inertia\Response;
 
 class RenewalController extends Controller
 {
-    public function show(Request $request, string $token): Response|RedirectResponse
+    public function show(Request $request, string $token, SubscriptionLifecycleService $lifecycle): Response|RedirectResponse
     {
         $subscription = Subscription::with(['user', 'product', 'subscriptionPlan'])
             ->where('renewal_token', $token)
-            ->where('status', Subscription::STATUS_ACTIVE)
+            ->whereIn('status', [Subscription::STATUS_ACTIVE, Subscription::STATUS_PAST_DUE])
             ->first();
 
         if (! $subscription || $subscription->subscriptionPlan->isLifetime()) {
             return redirect()->route('login')->with('error', 'Link de renovação inválido ou expirado.');
+        }
+
+        if (! $lifecycle->canRenew($subscription)) {
+            return redirect()->route('login')->with(
+                'error',
+                'O prazo para renovação desta assinatura expirou. Entre em contato com o suporte.'
+            );
         }
 
         $product = $subscription->product;
@@ -80,6 +88,9 @@ class RenewalController extends Controller
             'subscription' => [
                 'id' => $subscription->id,
                 'current_period_end' => $subscription->current_period_end?->toDateString(),
+                'renewable_until' => $lifecycle->renewableUntil($subscription)?->toDateString(),
+                'status' => $subscription->status,
+                'effective_status' => $lifecycle->effectiveStatus($subscription),
             ],
             'product' => $productArray,
             'plan' => $planArray,
@@ -90,7 +101,7 @@ class RenewalController extends Controller
         ]);
     }
 
-    public function process(Request $request): RedirectResponse
+    public function process(Request $request, SubscriptionLifecycleService $lifecycle): RedirectResponse
     {
         $request->validate([
             'token' => ['required', 'string', 'max:64'],
@@ -99,11 +110,18 @@ class RenewalController extends Controller
 
         $subscription = Subscription::with(['user', 'product', 'subscriptionPlan'])
             ->where('renewal_token', $request->input('token'))
-            ->where('status', Subscription::STATUS_ACTIVE)
+            ->whereIn('status', [Subscription::STATUS_ACTIVE, Subscription::STATUS_PAST_DUE])
             ->first();
 
         if (! $subscription || $subscription->subscriptionPlan->isLifetime()) {
             return redirect()->route('login')->with('error', 'Link de renovação inválido ou expirado.');
+        }
+
+        if (! $lifecycle->canRenew($subscription)) {
+            return redirect()->route('login')->with(
+                'error',
+                'O prazo para renovação desta assinatura expirou. Entre em contato com o suporte.'
+            );
         }
 
         $product = $subscription->product;
@@ -248,8 +266,10 @@ class RenewalController extends Controller
             'gateway' => 'manual',
         ]));
         $subscription->update([
+            'status' => Subscription::STATUS_ACTIVE,
             'current_period_start' => $periodStart,
             'current_period_end' => $periodEnd,
+            'past_due_at' => null,
         ]);
         event(new SubscriptionRenewed($subscription->fresh()));
         event(new OrderCompleted($order));

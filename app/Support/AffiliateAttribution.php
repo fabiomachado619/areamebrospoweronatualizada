@@ -6,6 +6,7 @@ use App\Models\CheckoutSession;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductAffiliate;
+use App\Services\ConversionPixelsResolver;
 use Illuminate\Http\Request;
 
 class AffiliateAttribution
@@ -108,13 +109,14 @@ class AffiliateAttribution
     }
 
     /**
-     * Pixels do checkout: produto por padrão; substitui pelos do afiliado aprovado quando ref válido e configurado.
+     * Pixels armazenados (produto ou afiliado), sem resolver integrações centralizadas.
      *
      * @return array<string, mixed>
      */
-    public static function conversionPixelsForCheckout(Product $product, ?string $affiliateCode): array
+    public static function conversionPixelsForCheckoutRaw(Product $product, ?string $affiliateCode): array
     {
-        $base = $product->conversion_pixels ?? Product::defaultConversionPixels();
+        $resolver = app(ConversionPixelsResolver::class);
+        $base = $resolver->storedConversionPixels($product);
 
         if ($affiliateCode === null) {
             return $base;
@@ -126,7 +128,22 @@ class AffiliateAttribution
             return $base;
         }
 
-        return $affiliate->affiliate_pixels;
+        return ConversionPixelsResolver::mergeStoredPixelTree(
+            Product::defaultConversionPixels(),
+            $affiliate->affiliate_pixels
+        );
+    }
+
+    /**
+     * Pixels do checkout: produto por padrão; substitui pelos do afiliado aprovado quando ref válido e configurado.
+     *
+     * @return array<string, mixed>
+     */
+    public static function conversionPixelsForCheckout(Product $product, ?string $affiliateCode): array
+    {
+        $raw = self::conversionPixelsForCheckoutRaw($product, $affiliateCode);
+
+        return app(ConversionPixelsResolver::class)->resolveFromStoredArray($raw, $product->tenant_id);
     }
 
     public static function affiliateCodeFromOrderMetadata(?array $metadata): ?string
@@ -146,15 +163,21 @@ class AffiliateAttribution
     {
         foreach (['meta', 'tiktok', 'google_ads', 'google_analytics'] as $platform) {
             $block = $pixels[$platform] ?? null;
-            if (! is_array($block)) {
+            if (! is_array($block) || empty($block['enabled'])) {
                 continue;
             }
-            if (! empty($block['enabled']) && ! empty($block['entries']) && is_array($block['entries'])) {
-                foreach ($block['entries'] as $entry) {
-                    if (is_array($entry) && count(array_filter($entry, fn ($v) => $v !== null && $v !== '' && $v !== false)) > 1) {
-                        return true;
-                    }
-                }
+            $integrationIds = $block['integration_ids'] ?? [];
+            if (is_array($integrationIds) && $integrationIds !== []) {
+                return true;
+            }
+            if (self::platformBlockHasInlineCredentials($block, $platform)) {
+                return true;
+            }
+        }
+
+        if (! empty($pixels['custom_script_integration_ids']) && is_array($pixels['custom_script_integration_ids'])) {
+            if ($pixels['custom_script_integration_ids'] !== []) {
+                return true;
             }
         }
 
@@ -167,5 +190,36 @@ class AffiliateAttribution
         }
 
         return false;
+    }
+
+    /**
+     * Detecta pixels inline (entries ou formato legado com credenciais na raiz do bloco).
+     *
+     * @param  array<string, mixed>  $block
+     */
+    public static function platformBlockHasInlineCredentials(array $block, string $platform): bool
+    {
+        if (! empty($block['entries']) && is_array($block['entries'])) {
+            foreach ($block['entries'] as $entry) {
+                if (is_array($entry) && self::pixelEntryHasCredentials($entry, $platform)) {
+                    return true;
+                }
+            }
+        }
+
+        return self::pixelEntryHasCredentials($block, $platform);
+    }
+
+    /**
+     * @param  array<string, mixed>  $entry
+     */
+    private static function pixelEntryHasCredentials(array $entry, string $platform): bool
+    {
+        return match ($platform) {
+            'meta', 'tiktok' => trim((string) ($entry['pixel_id'] ?? '')) !== '',
+            'google_ads' => trim((string) ($entry['conversion_id'] ?? '')) !== '',
+            'google_analytics' => trim((string) ($entry['measurement_id'] ?? '')) !== '',
+            default => false,
+        };
     }
 }
