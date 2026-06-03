@@ -1,11 +1,19 @@
 <script setup>
-import { ref, reactive, computed, watch, onMounted, nextTick, defineAsyncComponent, toRaw } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, toRaw } from 'vue';
 import { useForm, Link } from '@inertiajs/vue3';
 import LayoutInfoprodutor from '@/Layouts/LayoutInfoprodutor.vue';
 import { useSidebar } from '@/composables/useSidebar';
 import Button from '@/components/ui/Button.vue';
 import Toggle from '@/components/ui/Toggle.vue';
 import ImageUpload from '@/components/checkout/ImageUpload.vue';
+import CheckoutContentBlocksEditor from '@/components/checkout-builder/CheckoutContentBlocksEditor.vue';
+import { initContentBlocksFromAppearance } from '@/lib/checkoutContentFormats';
+import {
+    PREVIEW_MESSAGE_TYPE,
+    PREVIEW_ACK_TYPE,
+    PREVIEW_WINDOW_CALLBACK,
+    broadcastPreviewPayload,
+} from '@/lib/checkoutBuilderPreview';
 import {
     ChevronDown,
     ChevronRight,
@@ -21,6 +29,7 @@ import {
     Phone,
     Monitor,
     Smartphone,
+    RefreshCw,
     Code2,
     BookOpen,
 } from 'lucide-vue-next';
@@ -75,6 +84,7 @@ const configForm = reactive({
         side_banners: Array.isArray(props.config?.appearance?.side_banners)
             ? [...props.config.appearance.side_banners]
             : [],
+        content_blocks: initContentBlocksFromAppearance(props.config?.appearance),
     },
     timer: {
         enabled: props.config?.timer?.enabled ?? false,
@@ -170,23 +180,26 @@ const form = useForm({
 
 function submit() {
     const config = JSON.parse(JSON.stringify(configForm));
+    syncLegacyBannersFromContentBlocks(config);
     // Preservar upsell/downsell (configurados na aba do produto, não no Builder)
     if (props.config?.upsell) config.upsell = props.config.upsell;
     if (props.config?.downsell) config.downsell = props.config.downsell;
     form.config = config;
     form.offer_id = props.checkout_scope?.offer_id ?? null;
     form.plan_id = props.checkout_scope?.plan_id ?? null;
-    form.put(`/produtos/${props.produto.id}/checkout-config`);
+    form.put(`/produtos/${props.produto.id}/checkout-config`, {
+        onSuccess: () => refreshPreview(),
+    });
 }
 
-function addBanner(type) {
-    const arr = type === 'main' ? configForm.appearance.banners : configForm.appearance.side_banners;
-    arr.push('');
-}
-
-function removeBanner(type, index) {
-    const arr = type === 'main' ? configForm.appearance.banners : configForm.appearance.side_banners;
-    arr.splice(index, 1);
+function syncLegacyBannersFromContentBlocks(config) {
+    const blocks = config?.appearance?.content_blocks ?? [];
+    config.appearance.banners = blocks
+        .filter((b) => b?.type === 'image' && b.format === 'hero' && b.placement !== 'sidebar' && b.url)
+        .map((b) => b.url);
+    config.appearance.side_banners = blocks
+        .filter((b) => b?.type === 'image' && b.placement === 'sidebar' && b.url)
+        .map((b) => b.url);
 }
 
 function defaultReview() {
@@ -233,40 +246,120 @@ const previewIframeUrl = computed(() => {
     return url.toString();
 });
 
-const PREVIEW_MESSAGE_TYPE = 'checkout-builder-preview-config';
+const previewIframeSrc = computed(() => {
+    if (!previewIframeUrl.value) return null;
+    const url = new URL(previewIframeUrl.value);
+    if (previewReloadNonce.value > 0) {
+        url.searchParams.set('_r', String(previewReloadNonce.value));
+    }
+    return url.toString();
+});
+
+function refreshPreview() {
+    if (!previewIframeUrl.value) {
+        return;
+    }
+    previewRefreshing.value = true;
+    previewSyncedAt.value = null;
+    previewReloadNonce.value = Date.now();
+}
+
 const previewIframeRef = ref(null);
-const previewDebounceMs = 200;
+const previewSyncedAt = ref(null);
+const previewViewMode = ref('desktop');
+const previewReloadNonce = ref(0);
+const previewRefreshing = ref(false);
+let previewMessageSeq = 0;
+let previewRafId = null;
+
+function buildPreviewConfigSnapshot() {
+    const config = JSON.parse(JSON.stringify(toRaw(configForm)));
+    syncLegacyBannersFromContentBlocks(config);
+    if (props.config?.upsell) config.upsell = props.config.upsell;
+    if (props.config?.downsell) config.downsell = props.config.downsell;
+    return config;
+}
 
 function sendPreviewConfig() {
-    const win = previewIframeRef.value?.contentWindow;
-    if (!win || !previewIframeUrl.value) return;
+    const iframeEl = previewIframeRef.value;
+    const win = iframeEl?.contentWindow;
+    if (!win || !previewIframeUrl.value) {
+        return;
+    }
+
+    previewMessageSeq += 1;
+    const payload = {
+        type: PREVIEW_MESSAGE_TYPE,
+        config: buildPreviewConfigSnapshot(),
+        previewViewport: previewViewMode.value,
+        seq: previewMessageSeq,
+    };
+
     try {
-        const config = JSON.parse(JSON.stringify(toRaw(configForm)));
-        if (props.config?.upsell) config.upsell = props.config.upsell;
-        if (props.config?.downsell) config.downsell = props.config.downsell;
-        const payload = { type: PREVIEW_MESSAGE_TYPE, config };
-        /** `*` evita falha quando a origem efetiva do iframe difere da URL do src (redirect, www, etc.). O iframe valida `event.origin`. */
+        const applyPreview = win[PREVIEW_WINDOW_CALLBACK];
+        if (typeof applyPreview === 'function') {
+            applyPreview(payload);
+        }
+    } catch (_) {
+        /* cross-origin — fallback postMessage / BroadcastChannel */
+    }
+
+    try {
         win.postMessage(payload, '*');
     } catch (_) {}
+
+    broadcastPreviewPayload(payload);
 }
 
-let previewDebounceTimer = null;
+function sendPreviewNow() {
+    if (previewRafId != null) {
+        cancelAnimationFrame(previewRafId);
+        previewRafId = null;
+    }
+    sendPreviewConfig();
+}
+
+function onPreviewAckMessage(event) {
+    if (event?.data?.type !== PREVIEW_ACK_TYPE) {
+        return;
+    }
+    previewSyncedAt.value = event.data.at ?? Date.now();
+}
+
 function schedulePreviewUpdate() {
-    if (previewDebounceTimer) clearTimeout(previewDebounceTimer);
-    previewDebounceTimer = setTimeout(() => {
-        previewDebounceTimer = null;
+    if (previewRafId != null) {
+        return;
+    }
+    previewRafId = requestAnimationFrame(() => {
+        previewRafId = null;
         sendPreviewConfig();
-    }, previewDebounceMs);
+    });
 }
 
-/** Snapshot estável: `watch` em `reactive()` nem sempre dispara em todas as mutações aninhadas; stringify garante o disparo. */
+/** Deep watch: `toRaw` + stringify não rastreia mutações aninhadas do reactive(). */
 watch(
-    () => JSON.stringify(toRaw(configForm)),
-    () => schedulePreviewUpdate()
+    configForm,
+    () => schedulePreviewUpdate(),
+    { deep: true }
 );
+
+watch(
+    () => configForm.appearance.content_blocks,
+    () => sendPreviewNow(),
+    { deep: true }
+);
+
+watch(previewViewMode, () => sendPreviewNow());
+
+const previewSyncedLabel = computed(() => {
+    if (!previewSyncedAt.value) return null;
+    const d = new Date(previewSyncedAt.value);
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+});
 
 const { setExpanded } = useSidebar();
 function onPreviewIframeLoad() {
+    previewRefreshing.value = false;
     sendPreviewConfig();
     /** Reenvios: o listener no checkout pode registrar depois do primeiro postMessage no evento load. */
     [30, 120, 400].forEach((ms) => setTimeout(() => sendPreviewConfig(), ms));
@@ -274,11 +367,18 @@ function onPreviewIframeLoad() {
 
 onMounted(() => {
     setExpanded(false);
+    if (typeof window !== 'undefined') {
+        window.addEventListener('message', onPreviewAckMessage);
+    }
     schedulePreviewUpdate();
     nextTick(() => sendPreviewConfig());
 });
 
-const previewViewMode = ref('desktop');
+onUnmounted(() => {
+    if (typeof window !== 'undefined') {
+        window.removeEventListener('message', onPreviewAckMessage);
+    }
+});
 const uploadUrl = computed(() => `/produtos/${props.produto?.id}/checkout-upload`);
 
 /** @type {import('vue').Ref<'css' | 'head_html' | 'body_start_html' | 'body_end_html' | 'js'>} */
@@ -303,7 +403,7 @@ const inputClass =
 </script>
 
 <template>
-    <div class="flex h-[calc(100vh-4.5rem)] min-h-0 flex-col gap-6">
+    <div class="flex h-[calc(100dvh-10rem)] min-h-0 flex-col gap-3">
         <div class="shrink-0">
             <nav class="text-sm text-zinc-500 dark:text-zinc-400" aria-label="Breadcrumb">
                 <Link href="/produtos" class="hover:text-zinc-700 dark:hover:text-zinc-300">Produtos</Link>
@@ -316,9 +416,9 @@ const inputClass =
             </nav>
         </div>
 
-        <div class="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row">
+        <div class="flex min-h-0 flex-1 gap-4 lg:flex-row">
             <!-- Sidebar esquerda: rolagem apenas aqui -->
-            <div class="w-full shrink-0 space-y-4 overflow-y-auto lg:w-[380px]">
+            <div class="min-h-0 w-full shrink-0 space-y-4 overflow-y-auto lg:w-[380px] lg:max-h-full">
                 <!-- Tabs -->
                 <div
                     class="flex flex-wrap gap-1 rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-800"
@@ -346,6 +446,18 @@ const inputClass =
                         @click="activeTab = 'recursos'"
                     >
                         Recursos
+                    </button>
+                    <button
+                        type="button"
+                        :class="[
+                            'min-w-0 flex-1 basis-[calc(50%-0.25rem)] rounded-lg px-2 py-2 text-xs font-medium transition sm:basis-auto sm:px-3 sm:text-sm',
+                            activeTab === 'vendas'
+                                ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                                : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700',
+                        ]"
+                        @click="activeTab = 'vendas'"
+                    >
+                        Página de vendas
                     </button>
                     <button
                         type="button"
@@ -553,50 +665,6 @@ const inputClass =
                                     />
                                 </div>
                                 <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Cor da borda, fundo e tag "Oferta especial" dos produtos sugeridos.</p>
-                            </div>
-                            <div>
-                                <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                                    Banners principais
-                                </label>
-                                <div class="space-y-4">
-                                    <div
-                                        v-for="(url, i) in configForm.appearance.banners"
-                                        :key="'b-' + i"
-                                        class="flex flex-col gap-2"
-                                    >
-                                        <ImageUpload
-                                            :model-value="configForm.appearance.banners[i]"
-                                            :upload-url="uploadUrl"
-                                            :label="'Banner ' + (i + 1)"
-                                            recommended-size="1200×400 px"
-                                            @update:model-value="configForm.appearance.banners[i] = $event"
-                                        />
-                                        <Button type="button" variant="outline" size="sm" class="self-start" @click="removeBanner('main', i)">Remover banner</Button>
-                                    </div>
-                                    <Button type="button" variant="secondary" size="sm" @click="addBanner('main')">+ Banner</Button>
-                                </div>
-                            </div>
-                            <div>
-                                <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                                    Banners laterais
-                                </label>
-                                <div class="space-y-4">
-                                    <div
-                                        v-for="(url, i) in configForm.appearance.side_banners"
-                                        :key="'s-' + i"
-                                        class="flex flex-col gap-2"
-                                    >
-                                        <ImageUpload
-                                            :model-value="configForm.appearance.side_banners[i]"
-                                            :upload-url="uploadUrl"
-                                            :label="'Banner lateral ' + (i + 1)"
-                                            recommended-size="400×600 px"
-                                            @update:model-value="configForm.appearance.side_banners[i] = $event"
-                                        />
-                                        <Button type="button" variant="outline" size="sm" class="self-start" @click="removeBanner('side', i)">Remover banner</Button>
-                                    </div>
-                                    <Button type="button" variant="secondary" size="sm" @click="addBanner('side')">+ Banner lateral</Button>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -977,6 +1045,20 @@ const inputClass =
                     </div>
                 </div>
 
+                <!-- Aba Página de vendas -->
+                <div v-show="activeTab === 'vendas'" class="space-y-4">
+                    <div class="panel-card-lg p-4">
+                        <p class="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+                            Monte sua página de vendas com banners em tamanhos fixos e blocos de texto. A miniatura abaixo de cada bloco mostra como ficará no checkout.
+                        </p>
+                        <CheckoutContentBlocksEditor
+                            v-model="configForm.appearance.content_blocks"
+                            :upload-url="uploadUrl"
+                            @changed="sendPreviewNow"
+                        />
+                    </div>
+                </div>
+
                 <!-- Aba Template: lista de templates (Original + futuros via plugins) -->
                 <div v-show="activeTab === 'template'" class="space-y-4">
                     <div class="panel-card-lg">
@@ -1189,12 +1271,18 @@ const inputClass =
                 </Button>
             </div>
 
-            <!-- Área direita: preview fixo (sem rolagem) -->
-            <div class="panel-table flex min-h-0 flex-1 flex-col">
+            <!-- Área direita: preview ocupa toda a altura disponível -->
+            <div class="panel-table flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-700">
                     <div>
                         <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Preview em tempo real</p>
-                        <p class="text-xs text-zinc-500 dark:text-zinc-400">Alterações no painel à esquerda aparecem aqui automaticamente.</p>
+                        <p class="text-xs text-zinc-500 dark:text-zinc-400">
+                            Use o botão de atualizar para recarregar o preview.
+                            <span v-if="previewSyncedLabel" class="ml-1 inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                                <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                {{ previewSyncedLabel }}
+                            </span>
+                        </p>
                     </div>
                     <div class="flex items-center gap-2">
                         <div class="flex rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-600 dark:bg-zinc-700">
@@ -1227,6 +1315,16 @@ const inputClass =
                                 <Smartphone class="h-4 w-4" />
                             </button>
                         </div>
+                        <button
+                            type="button"
+                            :disabled="!previewIframeUrl || previewRefreshing"
+                            class="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-500 dark:hover:bg-zinc-600 dark:hover:text-zinc-200"
+                            aria-label="Atualizar preview"
+                            title="Atualizar preview"
+                            @click="refreshPreview"
+                        >
+                            <RefreshCw :class="['h-4 w-4', previewRefreshing && 'animate-spin']" />
+                        </button>
                         <a
                             v-if="previewUrl"
                             :href="previewUrl"
@@ -1240,35 +1338,30 @@ const inputClass =
                         </a>
                     </div>
                 </div>
-                <div class="relative min-h-0 flex-1 overflow-hidden p-4">
+                <div class="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
                     <div
                         v-if="previewIframeUrl"
-                        class="flex h-full justify-center overflow-hidden"
-                        :class="previewViewMode === 'mobile' ? 'items-center' : 'items-start'"
+                        class="flex min-h-0 flex-1"
+                        :class="previewViewMode === 'mobile' ? 'justify-center' : 'justify-stretch'"
                     >
                         <div
                             :class="[
-                                'panel-card overflow-hidden',
-                                previewViewMode === 'mobile'
-                                    ? 'h-full w-[375px] max-h-full shrink-0 flex flex-col'
-                                    : 'h-full w-full min-w-0',
+                                'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-950',
+                                previewViewMode === 'mobile' ? 'w-[375px] max-w-full shrink-0' : 'w-full',
                             ]"
                         >
                             <iframe
                                 ref="previewIframeRef"
-                                :src="previewIframeUrl"
+                                :src="previewIframeSrc"
                                 title="Preview do checkout"
-                                :class="[
-                                    'rounded-xl border-0 bg-white flex-1 min-h-0',
-                                    previewViewMode === 'mobile' ? 'w-full' : 'h-full w-full',
-                                ]"
+                                class="block h-full min-h-0 w-full flex-1 border-0 bg-white"
                                 @load="onPreviewIframeLoad"
                             />
                         </div>
                     </div>
                     <div
                         v-else
-                        class="flex h-full min-h-[200px] items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100/80 text-sm text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-400"
+                        class="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100/80 text-sm text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-400"
                     >
                         Configure o slug do checkout do produto para ver o preview.
                     </div>

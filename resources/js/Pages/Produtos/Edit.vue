@@ -248,8 +248,27 @@ const checkoutForceFromProduto = props.produto.checkout_config?.checkout_force ?
 const checkoutForceInitial = {
     enabled: Boolean(checkoutForceFromProduto.enabled),
     locale: ['pt_BR', 'en', 'es'].includes(checkoutForceFromProduto.locale) ? checkoutForceFromProduto.locale : 'pt_BR',
-    currency: checkoutForceFromProduto.currency ? String(checkoutForceFromProduto.currency).toUpperCase() : 'BRL',
 };
+
+const checkoutCurrencyFromProduto = props.produto.checkout_config?.checkout_currency ?? {};
+const checkoutCurrencyInitial = (() => {
+    if (checkoutCurrencyFromProduto.mode === 'fixed' || checkoutCurrencyFromProduto.mode === 'global') {
+        return {
+            mode: checkoutCurrencyFromProduto.mode,
+            currency: checkoutCurrencyFromProduto.currency
+                ? String(checkoutCurrencyFromProduto.currency).toUpperCase()
+                : 'BRL',
+        };
+    }
+    if (checkoutForceFromProduto.enabled && checkoutForceFromProduto.currency) {
+        return {
+            mode: 'fixed',
+            currency: String(checkoutForceFromProduto.currency).toUpperCase(),
+        };
+    }
+
+    return { mode: 'global', currency: 'BRL' };
+})();
 
 const subscriptionFromProduto = props.produto.checkout_config?.subscription ?? {};
 const subscriptionInitial = {
@@ -320,6 +339,7 @@ const form = useForm({
     cart_recovery_email: cartRecoveryInitial,
     pagarme_billing: pagarmeBillingInitial,
     checkout_force: { ...checkoutForceInitial },
+    checkout_currency: { ...checkoutCurrencyInitial },
     subscription: { ...subscriptionInitial },
     custom_prices_by_currency: {
         enabled: Boolean(props.produto.checkout_config?.custom_prices_by_currency?.enabled),
@@ -471,6 +491,18 @@ function onLogoFileChange(e) {
 function checkoutUrl(slug) {
     if (typeof window === 'undefined' || !slug) return '';
     return `${window.location.origin}/c/${slug}`;
+}
+
+function offerCheckoutQuery(offer) {
+    if (offer?.public_id) return `offer=${offer.public_id}`;
+    if (offer?.id != null) return `offer_id=${offer.id}`;
+    return '';
+}
+
+function planCheckoutQuery(plan) {
+    if (plan?.public_id) return `plan=${plan.public_id}`;
+    if (plan?.id != null) return `plan_id=${plan.id}`;
+    return '';
 }
 const mainCheckoutUrl = computed(() => checkoutUrl(props.produto.checkout_slug));
 const hasCheckoutLink = computed(() => !!props.produto.checkout_slug);
@@ -971,13 +1003,13 @@ const offerPlanItemsWithoutExclusiveCheckout = computed(() => {
     return list;
 });
 
-/** Lista para a aba Links: principal + todas as ofertas e planos. Cada oferta/plano tem link único (exclusivo ou checkout principal + ?offer_id/?plan_id). */
+/** Lista para a aba Links: principal + todas as ofertas e planos. Cada oferta/plano tem link único (exclusivo ou checkout principal + ?offer/?plan). */
 const allCheckoutLinks = computed(() => {
     const billingType = props.produto.billing_type ?? form.billing_type;
     const mainSlug = props.produto.checkout_slug || null;
     const items = [];
     if (mainSlug) {
-        items.push({ id: 'main', label: 'Preço base', slug: mainSlug, type: 'main', offer_id: null, plan_id: null });
+        items.push({ id: 'main', label: 'Preço base', slug: mainSlug, type: 'main', offer_public_id: null, plan_public_id: null, offer_id: null, plan_id: null });
     }
     if (billingType === 'one_time') {
         (props.produto.offers || []).forEach((o) => {
@@ -988,6 +1020,8 @@ const allCheckoutLinks = computed(() => {
                     label: o.name,
                     slug,
                     type: 'offer',
+                    offer_public_id: o.checkout_slug ? null : o.public_id,
+                    plan_public_id: null,
                     offer_id: o.checkout_slug ? null : o.id,
                     plan_id: null,
                 });
@@ -1003,6 +1037,8 @@ const allCheckoutLinks = computed(() => {
                     label: p.name,
                     slug,
                     type: 'plan',
+                    offer_public_id: null,
+                    plan_public_id: p.checkout_slug ? null : p.public_id,
                     offer_id: null,
                     plan_id: p.checkout_slug ? null : p.id,
                 });
@@ -1012,27 +1048,31 @@ const allCheckoutLinks = computed(() => {
     return items;
 });
 
-/** URL completa do checkout para um item da lista de links (inclui ?offer_id ou ?plan_id quando usa o checkout principal). */
+/** URL completa do checkout para um item da lista de links (inclui ?offer ou ?plan quando usa o checkout principal). */
 function getCheckoutLinkUrl(item) {
     const base = checkoutUrl(item.slug);
     if (!base) return '';
-    if (item.offer_id) return `${base}?offer_id=${item.offer_id}`;
-    if (item.plan_id) return `${base}?plan_id=${item.plan_id}`;
+    if (item.offer_public_id) return `${base}?offer=${item.offer_public_id}`;
+    if (item.plan_public_id) return `${base}?plan=${item.plan_public_id}`;
+    if (item.offer_id != null) return `${base}?offer_id=${item.offer_id}`;
+    if (item.plan_id != null) return `${base}?plan_id=${item.plan_id}`;
     return base;
 }
 
-/** URL do checkout para uma oferta na aba Geral: exclusivo ou principal + ?offer_id. */
+/** URL do checkout para uma oferta na aba Geral: exclusivo ou principal + ?offer. */
 function getOfferCheckoutUrl(offer) {
     if (offer.checkout_slug) return checkoutUrl(offer.checkout_slug);
     const main = props.produto.checkout_slug;
-    return main ? `${checkoutUrl(main)}?offer_id=${offer.id}` : '';
+    const query = offerCheckoutQuery(offer);
+    return main && query ? `${checkoutUrl(main)}?${query}` : '';
 }
 
-/** URL do checkout para um plano na aba Geral: exclusivo ou principal + ?plan_id. */
+/** URL do checkout para um plano na aba Geral: exclusivo ou principal + ?plan. */
 function getPlanCheckoutUrl(plan) {
     if (plan.checkout_slug) return checkoutUrl(plan.checkout_slug);
     const main = props.produto.checkout_slug;
-    return main ? `${checkoutUrl(main)}?plan_id=${plan.id}` : '';
+    const query = planCheckoutQuery(plan);
+    return main && query ? `${checkoutUrl(main)}?${query}` : '';
 }
 
 function ensureCheckoutSlug(item) {
@@ -1220,7 +1260,10 @@ function submit() {
         fd.append('checkout_force[enabled]', form.checkout_force?.enabled ? '1' : '0');
         if (form.checkout_force?.enabled) {
             fd.append('checkout_force[locale]', form.checkout_force.locale || '');
-            fd.append('checkout_force[currency]', form.checkout_force.currency || '');
+        }
+        fd.append('checkout_currency[mode]', form.checkout_currency?.mode === 'fixed' ? 'fixed' : 'global');
+        if (form.checkout_currency?.mode === 'fixed') {
+            fd.append('checkout_currency[currency]', form.checkout_currency.currency || 'BRL');
         }
         fd.append('custom_prices_by_currency[enabled]', form.custom_prices_by_currency?.enabled ? '1' : '0');
         if (form.custom_prices_by_currency?.enabled && form.custom_prices_by_currency.amounts) {
@@ -1502,6 +1545,51 @@ function submit() {
                                     <p v-if="form.errors.combo_product_ids" class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.errors.combo_product_ids }}</p>
                                 </div>
                             </div>
+
+                            <div class="rounded-xl border border-zinc-200/80 bg-zinc-50/50 p-4 dark:border-zinc-600/80 dark:bg-zinc-900/20">
+                                <label class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Moeda no checkout</label>
+                                <p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                    Global permite que o cliente escolha a moeda (com detecção por país). Moeda única oculta o seletor e usa só a moeda escolhida.
+                                </p>
+                                <div class="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        :class="[
+                                            'rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all',
+                                            form.checkout_currency.mode === 'global'
+                                                ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                                                : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-400',
+                                        ]"
+                                        @click="form.checkout_currency.mode = 'global'"
+                                    >
+                                        Global (multimoeda)
+                                    </button>
+                                    <button
+                                        type="button"
+                                        :class="[
+                                            'rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all',
+                                            form.checkout_currency.mode === 'fixed'
+                                                ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                                                : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-400',
+                                        ]"
+                                        @click="form.checkout_currency.mode = 'fixed'"
+                                    >
+                                        Moeda única
+                                    </button>
+                                </div>
+                                <div v-if="form.checkout_currency.mode === 'fixed'" class="mt-4 max-w-xs">
+                                    <label class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Moeda fixa *</label>
+                                    <select v-model="form.checkout_currency.currency" required :class="inputClass">
+                                        <option v-for="c in tenant_currencies" :key="c.code" :value="String(c.code).toUpperCase()">
+                                            {{ c.label || c.code }} ({{ String(c.code).toUpperCase() }})
+                                        </option>
+                                    </select>
+                                    <p v-if="form.errors['checkout_currency.currency']" class="mt-1 text-sm text-red-600 dark:text-red-400">
+                                        {{ form.errors['checkout_currency.currency'] }}
+                                    </p>
+                                </div>
+                            </div>
+
                             <div v-if="form.billing_type === 'subscription'">
                                 <label class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Recorrência *</label>
                                 <select v-model="form.base_interval" required :class="inputClass">
@@ -1593,6 +1681,7 @@ function submit() {
                                                 + {{ cname }}
                                             </span>
                                             <a
+                                                v-if="getOfferCheckoutUrl(offer)"
                                                 :href="getOfferCheckoutUrl(offer)"
                                                 target="_blank"
                                                 rel="noopener noreferrer"
@@ -1695,6 +1784,7 @@ function submit() {
                                                 + {{ cname }}
                                             </span>
                                             <a
+                                                v-if="getPlanCheckoutUrl(plan)"
                                                 :href="getPlanCheckoutUrl(plan)"
                                                 target="_blank"
                                                 rel="noopener noreferrer"
@@ -1798,33 +1888,20 @@ function submit() {
                     </div>
                     <div class="space-y-6 p-6">
                         <div class="panel-card-sm">
-                            <Toggle v-model="form.checkout_force.enabled" label="Forçar idioma e moeda no checkout" />
+                            <Toggle v-model="form.checkout_force.enabled" label="Forçar idioma no checkout" />
                             <p class="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                                Quando ativo, ignora a sugestão por país (geo) até o visitante mudar manualmente o idioma ou a moeda no checkout.
+                                Quando ativo, ignora a sugestão de idioma por país (geo) até o visitante mudar manualmente no checkout.
                             </p>
-                            <div v-if="form.checkout_force.enabled" class="mt-4 grid max-w-xl gap-4 sm:grid-cols-2">
-                                <div>
-                                    <label class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Idioma *</label>
-                                    <select v-model="form.checkout_force.locale" required :class="inputClass">
-                                        <option value="pt_BR">Português (Brasil)</option>
-                                        <option value="en">English</option>
-                                        <option value="es">Español</option>
-                                    </select>
-                                    <p v-if="form.errors['checkout_force.locale']" class="mt-1 text-sm text-red-600 dark:text-red-400">
-                                        {{ form.errors['checkout_force.locale'] }}
-                                    </p>
-                                </div>
-                                <div>
-                                    <label class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Moeda *</label>
-                                    <select v-model="form.checkout_force.currency" required :class="inputClass">
-                                        <option v-for="c in tenant_currencies" :key="c.code" :value="String(c.code).toUpperCase()">
-                                            {{ c.label || c.code }} ({{ String(c.code).toUpperCase() }})
-                                        </option>
-                                    </select>
-                                    <p v-if="form.errors['checkout_force.currency']" class="mt-1 text-sm text-red-600 dark:text-red-400">
-                                        {{ form.errors['checkout_force.currency'] }}
-                                    </p>
-                                </div>
+                            <div v-if="form.checkout_force.enabled" class="mt-4 max-w-xs">
+                                <label class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Idioma *</label>
+                                <select v-model="form.checkout_force.locale" required :class="inputClass">
+                                    <option value="pt_BR">Português (Brasil)</option>
+                                    <option value="en">English</option>
+                                    <option value="es">Español</option>
+                                </select>
+                                <p v-if="form.errors['checkout_force.locale']" class="mt-1 text-sm text-red-600 dark:text-red-400">
+                                    {{ form.errors['checkout_force.locale'] }}
+                                </p>
                             </div>
                         </div>
 
@@ -3259,6 +3336,7 @@ function submit() {
                                 </div>
                                 <div class="flex shrink-0 items-center gap-2">
                                     <a
+                                        v-if="getCheckoutLinkUrl(item)"
                                         :href="getCheckoutLinkUrl(item)"
                                         target="_blank"
                                         rel="noopener noreferrer"

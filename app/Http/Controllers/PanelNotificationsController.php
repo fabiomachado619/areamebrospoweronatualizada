@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\PanelNotification;
 use App\Models\PanelPushSubscription;
+use App\Support\PanelPushPreferences;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -32,6 +33,13 @@ class PanelNotificationsController extends Controller
             ->where('keys->p256dh', '!=', '')
             ->exists();
 
+        $pushSubscription = PanelPushSubscription::where('user_id', $user->id)
+            ->where('tenant_id', $user->tenant_id)
+            ->whereNotNull('endpoint')
+            ->where('endpoint', '!=', '')
+            ->latest('updated_at')
+            ->first();
+
         return response()->json([
             'data' => $notifications->items(),
             'meta' => [
@@ -42,6 +50,7 @@ class PanelNotificationsController extends Controller
             ],
             'unread_count' => $unreadCount,
             'push_subscribed' => $pushSubscribed,
+            'push_preferences' => PanelPushPreferences::normalize($pushSubscription?->preferences),
         ]);
     }
 

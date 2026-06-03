@@ -54,10 +54,12 @@ class WebhookPayloadBuilderTest extends TestCase
 
         $this->assertSame('Curso Premium', $payload['product']['name']);
         $this->assertSame('Oferta Black Friday', $payload['offer']['name']);
-        $this->assertSame($offer->id, $payload['products'][0]['offer']['id']);
         $this->assertSame('pix', $payload['payment']['method']);
         $this->assertSame('meta', $payload['tracking']['utm_source']);
-        $this->assertSame($product->id, $payload['order']['product_id']);
+        $this->assertSame('buyer@test.com', $payload['customer']['email']);
+        $this->assertArrayNotHasKey('order_bumps', $payload);
+        $this->assertArrayNotHasKey('products', $payload);
+        $this->assertArrayNotHasKey('email', $payload['order']);
     }
 
     public function test_order_payload_includes_order_bump_line_items(): void
@@ -90,11 +92,10 @@ class WebhookPayloadBuilderTest extends TestCase
 
         $payload = WebhookPayloadBuilder::forOrderEvent($order->fresh());
 
-        $this->assertCount(2, $payload['products']);
-        $this->assertTrue($payload['products'][0]['is_main']);
-        $this->assertFalse($payload['products'][0]['is_order_bump']);
-        $this->assertTrue($payload['products'][1]['is_order_bump']);
-        $this->assertSame('Order bump extra', $payload['products'][1]['name']);
+        $this->assertCount(1, $payload['order_bumps']);
+        $this->assertSame('Order bump extra', $payload['order_bumps'][0]['name']);
+        $this->assertSame(20.0, $payload['order_bumps'][0]['amount']);
+        $this->assertSame('Produto principal', $payload['product']['name']);
     }
 
     public function test_tracking_merges_checkout_session_utms(): void
@@ -126,6 +127,47 @@ class WebhookPayloadBuilderTest extends TestCase
 
         $this->assertSame('google', $payload['tracking']['utm_source']);
         $this->assertSame('spring', $payload['tracking']['utm_campaign']);
+    }
+
+    public function test_tracking_does_not_include_unlisted_metadata_keys(): void
+    {
+        $product = $this->createTestProduct();
+
+        $order = Order::create([
+            'tenant_id' => $product->tenant_id,
+            'product_id' => $product->id,
+            'status' => 'completed',
+            'amount' => 50,
+            'currency' => 'BRL',
+            'email' => 'buyer@test.com',
+            'metadata' => [
+                'utm_source' => 'meta',
+                'fbp' => 'should-not-appear',
+                'custom_field' => 'ignored',
+            ],
+        ]);
+
+        CheckoutSession::create([
+            'tenant_id' => $product->tenant_id,
+            'product_id' => $product->id,
+            'checkout_slug' => $product->checkout_slug,
+            'session_token' => 'tok-'.uniqid('', true),
+            'step' => CheckoutSession::STEP_CONVERTED,
+            'order_id' => $order->id,
+            'tracking_metadata' => [
+                'fbp' => 'fb.1.example',
+                'fbc' => 'should-not-appear',
+                'gclid' => 'abc123',
+            ],
+        ]);
+
+        $payload = WebhookPayloadBuilder::forOrderEvent($order);
+
+        $this->assertSame('meta', $payload['tracking']['utm_source']);
+        $this->assertSame('abc123', $payload['tracking']['gclid']);
+        $this->assertArrayNotHasKey('fbp', $payload['tracking']);
+        $this->assertArrayNotHasKey('fbc', $payload['tracking']);
+        $this->assertArrayNotHasKey('custom_field', $payload['tracking']);
     }
 
     public function test_subscription_payload_includes_lifecycle_fields(): void
@@ -172,9 +214,11 @@ class WebhookPayloadBuilderTest extends TestCase
         $this->assertArrayHasKey('renewable_until', $payload['subscription']);
         $this->assertArrayHasKey('days_overdue', $payload['subscription']);
         $this->assertSame($periodEnd->copy()->addDays(2)->toDateString(), $payload['subscription']['access_until']);
+        $this->assertArrayNotHasKey('products', $payload);
+        $this->assertSame('Mensal', $payload['subscription_plan']['name']);
     }
 
-    public function test_dispatch_webhook_job_sends_products_array(): void
+    public function test_dispatch_webhook_job_sends_product_name(): void
     {
         Http::fake(['https://hook.example/*' => Http::response('ok', 200)]);
 
@@ -204,8 +248,7 @@ class WebhookPayloadBuilderTest extends TestCase
         Http::assertSent(function ($request) {
             $body = json_decode($request->body(), true);
 
-            return isset($body['payload']['products'][0]['name'])
-                && $body['payload']['products'][0]['name'] === 'Webhook Product'
+            return ($body['payload']['product']['name'] ?? null) === 'Webhook Product'
                 && $body['event'] === 'pedido_pago';
         });
     }

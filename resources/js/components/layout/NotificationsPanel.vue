@@ -6,6 +6,7 @@ import { router } from '@inertiajs/vue3';
 import { usePanelPushSubscribe } from '@/composables/usePanelPushSubscribe';
 import { pushErrorMessage } from '@/lib/pushSubscription';
 import { usePage } from '@inertiajs/vue3';
+import Toggle from '@/components/ui/Toggle.vue';
 
 const props = defineProps({
     open: { type: Boolean, default: false },
@@ -61,6 +62,8 @@ const unreadCount = ref(0);
 const pushSubscribed = ref(false);
 const meta = ref({ current_page: 1, last_page: 1, total: 0 });
 const activatingPush = ref(false);
+const pushPreferences = ref({ pix: true, boleto: true, card: true });
+const savingPreferences = ref(false);
 
 async function fetchNotifications() {
     if (!props.open) return;
@@ -70,6 +73,13 @@ async function fetchNotifications() {
         notifications.value = data.data ?? [];
         unreadCount.value = data.unread_count ?? 0;
         pushSubscribed.value = data.push_subscribed ?? false;
+        if (data.push_preferences) {
+            pushPreferences.value = {
+                pix: data.push_preferences.pix !== false,
+                boleto: data.push_preferences.boleto !== false,
+                card: data.push_preferences.card !== false,
+            };
+        }
         meta.value = data.meta ?? { current_page: 1, last_page: 1, total: 0 };
         emit('unread-count-update', unreadCount.value);
     } catch (_) {
@@ -77,6 +87,24 @@ async function fetchNotifications() {
     } finally {
         loading.value = false;
     }
+}
+
+async function savePushPreferences() {
+    if (!pushSubscribed.value && !pushActive.value) return;
+    savingPreferences.value = true;
+    try {
+        const { data } = await axios.patch('/painel/push-preferences', {
+            preferences: pushPreferences.value,
+        });
+        if (data?.preferences) {
+            pushPreferences.value = {
+                pix: data.preferences.pix !== false,
+                boleto: data.preferences.boleto !== false,
+                card: data.preferences.card !== false,
+            };
+        }
+    } catch (_) {}
+    savingPreferences.value = false;
 }
 
 watch(
@@ -290,6 +318,33 @@ async function reactivateNotifications() {
                         >
                             Notificações push não configuradas no servidor (chaves VAPID).
                         </p>
+
+                        <div
+                            v-if="pushEnabled && (pushActive || pushSubscribed)"
+                            class="mt-3 space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-600"
+                        >
+                            <p class="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                                Avisar sobre
+                            </p>
+                            <Toggle
+                                v-model="pushPreferences.pix"
+                                label="PIX"
+                                :disabled="savingPreferences"
+                                @update:model-value="savePushPreferences"
+                            />
+                            <Toggle
+                                v-model="pushPreferences.boleto"
+                                label="Boleto"
+                                :disabled="savingPreferences"
+                                @update:model-value="savePushPreferences"
+                            />
+                            <Toggle
+                                v-model="pushPreferences.card"
+                                label="Cartão, Apple Pay e Google Pay"
+                                :disabled="savingPreferences"
+                                @update:model-value="savePushPreferences"
+                            />
+                        </div>
                     </div>
 
                     <div class="flex shrink-0 items-center justify-between border-b border-zinc-200 px-4 py-2 dark:border-zinc-700">

@@ -5,8 +5,12 @@
     # Raiz (/) – redireciona diretamente para /login (evita 404)
     RewriteRule ^/?$ /login [R=302,L]
 
-    # /storage/* – servir de public/storage/ (link simbólico do Laravel)
+    # /storage/* – arquivo local via symlink, se existir
+    RewriteCond %{DOCUMENT_ROOT}/public/storage/$1 -f
     RewriteRule ^storage/(.*)$ public/storage/$1 [L]
+
+    # /storage/* – fallback Laravel (StorageServeController)
+    RewriteRule ^storage/ public/index.php [L]
 
     # /build/* – servir de public/build/ (assets Vite)
     RewriteRule ^build/(.*)$ public/build/$1 [L]

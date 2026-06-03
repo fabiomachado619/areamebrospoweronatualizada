@@ -116,7 +116,7 @@ class AppServiceProvider extends ServiceProvider
 
         // Limite específico para geração de PIX no checkout (por IP).
         // Só conta quando payment_method === 'pix'. Para outros métodos não impõe limite extra.
-        $checkoutPixPer5Min = max(1, (int) config('checkout_security.rate.pix_per_5_minutes', 3));
+        $checkoutPixPer5Min = max(1, (int) config('checkout_security.rate.pix_per_5_minutes', 6));
         RateLimiter::for('checkout-pix', function (Request $request) use ($checkoutPixPer5Min) {
             $method = strtolower((string) $request->input('payment_method', ''));
             if ($method !== 'pix') {
@@ -126,7 +126,7 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinutes(5, $checkoutPixPer5Min)->by($request->ip());
         });
 
-        $checkoutEmailPerHour = max(1, (int) config('checkout_security.rate.email_per_hour', 8));
+        $checkoutEmailPerHour = max(1, (int) config('checkout_security.rate.email_per_hour', 15));
         RateLimiter::for('checkout-email', function (Request $request) use ($checkoutEmailPerHour) {
             $email = strtolower(trim((string) $request->input('email', '')));
             if ($email === '') {
@@ -162,13 +162,13 @@ class AppServiceProvider extends ServiceProvider
             Cache::put('queue_heartbeat', now()->toIso8601String(), now()->addMinutes(5));
         });
 
+        Event::listen(OrderCompleted::class, SendPanelPushOnOrderCompleted::class, 100);
+        Event::listen(PixGenerated::class, SendPanelPushOnPixGenerated::class, 100);
+        Event::listen(BoletoGenerated::class, SendPanelPushOnBoletoGenerated::class, 100);
         Event::listen(OrderCompleted::class, \App\Listeners\AllocateCommissionsOnOrderCompleted::class);
         Event::listen(OrderCompleted::class, SendAccessEmailOnOrderCompleted::class);
-        Event::listen(OrderCompleted::class, SendPanelPushOnOrderCompleted::class);
         Event::listen(OrderCompleted::class, SendMetaPurchaseCapiOnOrderCompleted::class);
         Event::listen(OrderCompleted::class, \App\Listeners\InvalidateDashboardCacheOnOrderCompleted::class);
-        Event::listen(PixGenerated::class, SendPanelPushOnPixGenerated::class);
-        Event::listen(BoletoGenerated::class, SendPanelPushOnBoletoGenerated::class);
         Event::listen(OrderRefunded::class, RevokeAccessOnOrderRefunded::class);
         Event::subscribe(WebhookEventSubscriber::class);
         Event::subscribe(SendApiApplicationWebhookListener::class);

@@ -170,6 +170,7 @@ class StorageService
 
     /**
      * Get the public URL for a stored file.
+     * Local disk returns a relative path (/storage/...) so images work on any host (custom domain, ngrok, etc.).
      */
     public function url(string $path): string
     {
@@ -180,10 +181,27 @@ class StorageService
         $this->disk(); // ensure disk is resolved (sets isLocal)
 
         if ($this->isLocal) {
-            return url('/storage/' . ltrim($path, '/'));
+            return '/storage/' . ltrim($path, '/');
         }
 
         return $this->disk->url($path);
+    }
+
+    /**
+     * Absolute URL for e-mails, Open Graph, APIs externas, etc.
+     */
+    public function absoluteUrl(string $path): string
+    {
+        $url = $this->url($path);
+        if ($url === '') {
+            return '';
+        }
+
+        if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
+            return $url;
+        }
+
+        return url($url);
     }
 
     /**

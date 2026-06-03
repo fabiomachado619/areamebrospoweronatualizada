@@ -95,10 +95,13 @@ class CheckoutGeoSuggestionsTest extends TestCase
             'name' => 'Force locale product',
             'price' => 10,
             'checkout_config' => [
+                'checkout_currency' => [
+                    'mode' => 'fixed',
+                    'currency' => 'BRL',
+                ],
                 'checkout_force' => [
                     'enabled' => true,
                     'locale' => 'pt_BR',
-                    'currency' => 'BRL',
                 ],
             ],
         ]);
@@ -111,5 +114,35 @@ class CheckoutGeoSuggestionsTest extends TestCase
             ->where('suggested_country_code', 'US')
             ->where('suggested_locale', 'pt_BR')
             ->where('suggested_currency', 'BRL'));
+    }
+
+    public function test_fixed_currency_product_returns_single_currency_on_checkout(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        User::factory()->create([
+            'role' => User::ROLE_INFOPRODUTOR,
+            'tenant_id' => 1,
+        ]);
+
+        $product = $this->createTestProduct([
+            'name' => 'Fixed USD product',
+            'price' => 10,
+            'checkout_config' => [
+                'checkout_currency' => [
+                    'mode' => 'fixed',
+                    'currency' => 'USD',
+                ],
+            ],
+        ]);
+
+        $response = $this->withHeader('CF-IPCountry', 'BR')
+            ->get('/c/'.$product->checkout_slug);
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->where('suggested_currency', 'USD')
+            ->has('currencies', 1)
+            ->where('currencies.0.code', 'USD'));
     }
 }

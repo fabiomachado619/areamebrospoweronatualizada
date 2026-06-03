@@ -142,6 +142,12 @@ class ReportingPeriod
         Cache::put($key, (string) microtime(true), now()->addDays(2));
     }
 
+    /** Invalidates dashboard + tracking aggregated caches (shared bust token). */
+    public static function bustTrackingCache(?int $tenantId): void
+    {
+        self::bustDashboardCache($tenantId);
+    }
+
     public static function dashboardBustToken(?int $tenantId): string
     {
         return (string) Cache::get('dashboard_bust:'.($tenantId ?? 'global'), '0');

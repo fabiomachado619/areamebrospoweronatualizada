@@ -1352,6 +1352,16 @@ const selectClass =
                                 O painel tentará atualizar baixando um pacote do GitHub e aplicando os arquivos por cima, preservando <code class="rounded bg-amber-100 px-1 dark:bg-amber-900/40">.env</code>, <code class="rounded bg-amber-100 px-1 dark:bg-amber-900/40">storage/</code>, <code class="rounded bg-amber-100 px-1 dark:bg-amber-900/40">database/</code> e <code class="rounded bg-amber-100 px-1 dark:bg-amber-900/40">plugins/</code>.
                             </p>
                         </div>
+                        <div class="rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-800/50 dark:bg-sky-900/20">
+                            <p class="text-sm font-medium text-sky-900 dark:text-sky-100">Checkout, cartão ou pixels bloqueados?</p>
+                            <p class="mt-1 text-sm text-sky-800 dark:text-sky-200">
+                                Instalações manuais antigas podem bloquear scripts de pagamento (CajuPay, Google Analytics, Utmify) por CSP.
+                                Atualize a plataforma aqui para aplicar a política corrigida. Após atualizar, limpe o cache do navegador no checkout.
+                                Domínios extras podem ser definidos no <code class="rounded bg-sky-100 px-1 dark:bg-sky-900/40">.env</code> com
+                                <code class="rounded bg-sky-100 px-1 dark:bg-sky-900/40">CSP_EXTRA_SCRIPT_SRC</code> e
+                                <code class="rounded bg-sky-100 px-1 dark:bg-sky-900/40">CSP_EXTRA_CONNECT_SRC</code>.
+                            </p>
+                        </div>
                         <div v-if="updateCheckResult" class="panel-card-sm">
                             <p v-if="updateCheckResult.error" class="text-sm text-amber-600 dark:text-amber-400">{{ updateCheckResult.error }}</p>
                             <p v-else-if="updateCheckResult.available" class="text-sm font-medium text-emerald-600 dark:text-emerald-400">

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue';
-import { ChevronDown, ChevronUp, Tag, Globe, Banknote, Check } from 'lucide-vue-next';
+import { ChevronDown, ChevronUp, Tag, Globe, Check } from 'lucide-vue-next';
+import { retryImageOnError } from '@/lib/imageLoadRetry';
 import CheckoutDropdown from './CheckoutDropdown.vue';
 
 const INTERVAL_LABELS = {
@@ -28,13 +29,10 @@ const props = defineProps({
     formatPrice: { type: Function, default: (v, c) => String(v) },
     locale: { type: String, default: 'pt_BR' },
     supportedLocales: { type: Array, default: () => ['pt_BR', 'en', 'es'] },
-    currencyList: { type: Array, default: () => [] },
-    featuredCurrencies: { type: Array, default: () => [] },
-    otherCurrencies: { type: Array, default: () => [] },
     localeLabels: { type: Object, default: () => ({ pt_BR: 'PT', en: 'EN', es: 'ES' }) },
 });
 
-const emit = defineEmits(['set-locale', 'set-currency']);
+const emit = defineEmits(['set-locale']);
 
 const summary = computed(() => props.config?.summary ?? {});
 const showDescription = computed(() => summary.value.show_description !== false);
@@ -78,40 +76,10 @@ const expanded = ref(false);
 const displayDesc = computed(() => (expanded.value ? fullDesc.value : shortDesc.value));
 
 const localeOpen = ref(false);
-const currencyOpen = ref(false);
-const currencySearch = ref('');
-
-const featuredList = computed(() =>
-    props.featuredCurrencies?.length ? props.featuredCurrencies : props.currencyList.filter((c) => ['BRL', 'USD', 'EUR'].includes(c.code))
-);
-
-const otherList = computed(() => {
-    if (props.otherCurrencies?.length) return props.otherCurrencies;
-    const featuredCodes = new Set(featuredList.value.map((c) => c.code));
-    return props.currencyList.filter((c) => !featuredCodes.has(c.code));
-});
-
-const filteredOtherCurrencies = computed(() => {
-    const q = currencySearch.value.trim().toLowerCase();
-    if (!q) return otherList.value;
-    return otherList.value.filter((c) => {
-        const code = String(c.code || '').toLowerCase();
-        const label = String(c.label || '').toLowerCase();
-        const symbol = String(c.symbol || '').toLowerCase();
-        return code.includes(q) || label.includes(q) || symbol.includes(q);
-    });
-});
-
-const hasOtherCurrencies = computed(() => otherList.value.length > 0);
 
 function selectLocale(loc) {
     emit('set-locale', loc);
     localeOpen.value = false;
-}
-function selectCurrency(code) {
-    emit('set-currency', code);
-    currencyOpen.value = false;
-    currencySearch.value = '';
 }
 </script>
 
@@ -126,6 +94,7 @@ function selectCurrency(code) {
                 fetchpriority="high"
                 decoding="async"
                 class="h-24 w-24 rounded-2xl object-cover ring-2 ring-gray-100 shadow-lg sm:h-28 sm:w-28"
+                @error="retryImageOnError"
             />
         </div>
         <div class="min-w-0 flex-1" data-checkout="summary-main">
@@ -136,7 +105,7 @@ function selectCurrency(code) {
                 >
                     {{ product.name }}
                 </h1>
-                <div class="flex shrink-0 items-center gap-1.5" data-checkout="summary-locale-currency">
+                <div class="flex shrink-0 items-center gap-1.5" data-checkout="summary-locale">
                     <CheckoutDropdown
                         v-model:open="localeOpen"
                         :icon="Globe"
@@ -155,53 +124,6 @@ function selectCurrency(code) {
                             <span>{{ localeLabels[loc] || loc }}</span>
                             <Check v-if="locale === loc" class="h-4 w-4 shrink-0 text-gray-500" />
                         </button>
-                    </CheckoutDropdown>
-                    <CheckoutDropdown
-                        v-model:open="currencyOpen"
-                        :icon="Banknote"
-                        aria-label="Moeda"
-                        align="right"
-                    >
-                        <div class="max-h-[min(70vh,22rem)] overflow-y-auto">
-                            <div v-if="featuredList.length" class="border-b border-gray-100 px-2 py-2">
-                                <p class="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Principais</p>
-                                <button
-                                    v-for="c in featuredList"
-                                    :key="'f-' + c.code"
-                                    type="button"
-                                    role="option"
-                                    class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-gray-50"
-                                    :class="displayCurrency === c.code ? 'bg-gray-50 font-medium text-gray-900' : 'text-gray-700'"
-                                    @click="selectCurrency(c.code)"
-                                >
-                                    <span>{{ c.code }} · {{ c.symbol }}<span v-if="c.label" class="text-gray-400"> — {{ c.label }}</span></span>
-                                    <Check v-if="displayCurrency === c.code" class="h-4 w-4 shrink-0 text-gray-500" />
-                                </button>
-                            </div>
-                            <div v-if="hasOtherCurrencies" class="px-2 py-2">
-                                <p class="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Outras moedas</p>
-                                <input
-                                    v-model="currencySearch"
-                                    type="search"
-                                    placeholder="Buscar moeda…"
-                                    class="mb-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-300"
-                                    @click.stop
-                                />
-                                <button
-                                    v-for="c in filteredOtherCurrencies"
-                                    :key="c.code"
-                                    type="button"
-                                    role="option"
-                                    class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-gray-50"
-                                    :class="displayCurrency === c.code ? 'bg-gray-50 font-medium text-gray-900' : 'text-gray-700'"
-                                    @click="selectCurrency(c.code)"
-                                >
-                                    <span class="truncate">{{ c.code }} · {{ c.symbol }}<span v-if="c.label" class="text-gray-400"> — {{ c.label }}</span></span>
-                                    <Check v-if="displayCurrency === c.code" class="h-4 w-4 shrink-0 text-gray-500" />
-                                </button>
-                                <p v-if="filteredOtherCurrencies.length === 0" class="px-3 py-2 text-center text-xs text-gray-500">Nenhuma moeda encontrada.</p>
-                            </div>
-                        </div>
                     </CheckoutDropdown>
                 </div>
             </div>

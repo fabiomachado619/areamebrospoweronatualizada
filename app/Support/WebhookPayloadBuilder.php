@@ -4,16 +4,28 @@ namespace App\Support;
 
 use App\Models\CheckoutSession;
 use App\Models\Order;
-use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ProductOffer;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
-use App\Services\StorageService;
 use Illuminate\Support\Facades\URL;
 
 class WebhookPayloadBuilder
 {
+    /** @var list<string> */
+    private const TRACKING_KEYS = [
+        'utm_source',
+        'utm_medium',
+        'utm_campaign',
+        'utm_content',
+        'utm_term',
+        'fbclid',
+        'gclid',
+        'msclkid',
+        'src',
+        'sck',
+    ];
+
     /**
      * @param  array<string, mixed>  $extras  pix, boleto, access, test flags, etc.
      * @return array<string, mixed>
@@ -42,10 +54,14 @@ class WebhookPayloadBuilder
             'product' => self::productSnapshot($order->product),
             'offer' => self::offerSnapshot($order->productOffer),
             'subscription_plan' => self::planSnapshot($order->subscriptionPlan),
-            'products' => self::lineItemsFromOrder($order),
             'payment' => self::paymentFromOrder($order),
             'tracking' => self::trackingFromOrder($order, $session),
         ];
+
+        $bumps = self::orderBumpsFromOrder($order);
+        if ($bumps !== []) {
+            $payload['order_bumps'] = $bumps;
+        }
 
         return array_merge($payload, $extras);
     }
@@ -60,33 +76,11 @@ class WebhookPayloadBuilder
         $product = $session->product;
         $offer = $session->productOffer;
         $plan = $session->subscriptionPlan;
-
         $slug = $session->checkout_slug ?? $product?->checkout_slug ?? '';
-
-        $line = [];
-        if ($product) {
-            $line[] = self::buildLineItem(
-                product: $product,
-                offer: $offer,
-                plan: $plan,
-                amount: (float) ($offer?->price ?? $plan?->price ?? $product->price ?? 0),
-                currency: $offer?->getCurrencyOrDefault()
-                    ?? $plan?->getCurrencyOrDefault()
-                    ?? $product->getCurrencyOrDefault(),
-                isMain: true,
-                isOrderBump: false,
-            );
-        }
 
         return [
             'checkout_session' => [
                 'id' => $session->id,
-                'session_token' => $session->session_token,
-                'step' => $session->step,
-                'product_id' => $session->product_id,
-                'product_offer_id' => $session->product_offer_id,
-                'subscription_plan_id' => $session->subscription_plan_id,
-                'checkout_slug' => $session->checkout_slug,
                 'email' => $session->email,
                 'name' => $session->name,
                 'created_at' => $session->created_at?->toIso8601String(),
@@ -94,14 +88,11 @@ class WebhookPayloadBuilder
             'customer' => [
                 'name' => $session->name ?? '',
                 'email' => $session->email ?? '',
-                'phone' => '',
-                'cpf' => '',
             ],
             'checkout_link' => self::checkoutLinkFromSlug($slug),
             'product' => self::productSnapshot($product),
             'offer' => self::offerSnapshot($offer),
             'subscription_plan' => self::planSnapshot($plan),
-            'products' => $line,
             'tracking' => self::trackingFromSession($session),
         ];
     }
@@ -128,51 +119,26 @@ class WebhookPayloadBuilder
             ?? $subscription->product?->checkout_slug
             ?? '';
 
-        $plan = $subscription->subscriptionPlan;
-        $product = $subscription->product;
-
-        $lines = [];
-        if ($product) {
-            $lines[] = self::buildLineItem(
-                product: $product,
-                offer: null,
-                plan: $plan,
-                amount: (float) ($plan?->price ?? $product->price ?? 0),
-                currency: $plan?->getCurrencyOrDefault() ?? $product->getCurrencyOrDefault(),
-                isMain: true,
-                isOrderBump: false,
-            );
-        }
-
         return [
             'subscription' => [
                 'id' => $subscription->id,
                 'status' => $subscription->status,
                 'effective_status' => $lifecycle->effectiveStatus($subscription),
-                'product_id' => $subscription->product_id,
-                'subscription_plan_id' => $subscription->subscription_plan_id,
-                'user_id' => $subscription->user_id,
                 'current_period_start' => $subscription->current_period_start?->toDateString(),
                 'current_period_end' => $subscription->current_period_end?->toDateString(),
                 'access_until' => $accessUntil?->toDateString(),
                 'renewable_until' => $renewableUntil?->toDateString(),
                 'days_overdue' => $daysOverdue,
                 'cancelled_at' => $subscription->cancelled_at?->toIso8601String(),
-                'gateway_subscription_id' => $subscription->gateway_subscription_id,
-                'created_at' => $subscription->created_at?->toIso8601String(),
-                'updated_at' => $subscription->updated_at?->toIso8601String(),
             ],
             'customer' => [
                 'name' => $subscription->user?->name ?? '',
                 'email' => $subscription->user?->email ?? '',
                 'phone' => $subscription->user?->phone ?? '',
-                'cpf' => '',
             ],
             'checkout_link' => self::checkoutLinkFromSlug($slug),
-            'product' => self::productSnapshot($product),
-            'offer' => null,
-            'subscription_plan' => self::planSnapshot($plan),
-            'products' => $lines,
+            'product' => self::productSnapshot($subscription->product),
+            'subscription_plan' => self::planSnapshot($subscription->subscriptionPlan),
         ];
     }
 
@@ -181,30 +147,22 @@ class WebhookPayloadBuilder
      */
     private static function orderSnapshot(Order $order): array
     {
-        return [
+        $snapshot = [
             'id' => $order->id,
-            'tenant_id' => $order->tenant_id,
-            'user_id' => $order->user_id,
-            'product_id' => $order->product_id,
-            'product_offer_id' => $order->product_offer_id,
-            'subscription_plan_id' => $order->subscription_plan_id,
             'status' => $order->status,
             'amount' => (float) $order->amount,
             'currency' => $order->getCurrencyOrDefault(),
-            'email' => $order->email,
-            'cpf' => $order->cpf,
-            'phone' => $order->phone,
             'coupon_code' => $order->coupon_code,
-            'gateway' => $order->gateway,
-            'gateway_id' => $order->gateway_id,
-            'approved_manually' => (bool) $order->approved_manually,
             'is_renewal' => (bool) $order->is_renewal,
-            'period_start' => $order->period_start?->toDateString(),
-            'period_end' => $order->period_end?->toDateString(),
-            'metadata' => $order->metadata ?? [],
             'created_at' => $order->created_at?->toIso8601String(),
-            'updated_at' => $order->updated_at?->toIso8601String(),
         ];
+
+        if ($order->period_start || $order->period_end) {
+            $snapshot['period_start'] = $order->period_start?->toDateString();
+            $snapshot['period_end'] = $order->period_end?->toDateString();
+        }
+
+        return $snapshot;
     }
 
     /**
@@ -236,19 +194,11 @@ class WebhookPayloadBuilder
             return null;
         }
 
-        $imageUrl = null;
-        if ($product->image) {
-            $imageUrl = (new StorageService($product->tenant_id))->url($product->image);
-        }
-
         return [
             'id' => $product->id,
             'name' => $product->name,
-            'slug' => $product->slug,
-            'checkout_slug' => $product->checkout_slug,
             'type' => $product->type,
             'billing_type' => $product->billing_type,
-            'image_url' => $imageUrl,
         ];
     }
 
@@ -263,11 +213,9 @@ class WebhookPayloadBuilder
 
         return [
             'id' => $offer->id,
-            'product_id' => $offer->product_id,
             'name' => $offer->name,
             'price' => (float) $offer->price,
             'currency' => $offer->getCurrencyOrDefault(),
-            'checkout_slug' => $offer->checkout_slug,
         ];
     }
 
@@ -282,88 +230,44 @@ class WebhookPayloadBuilder
 
         return [
             'id' => $plan->id,
-            'product_id' => $plan->product_id,
             'name' => $plan->name,
             'price' => (float) $plan->price,
             'currency' => $plan->getCurrencyOrDefault(),
             'interval' => $plan->interval,
-            'checkout_slug' => $plan->checkout_slug,
         ];
     }
 
     /**
+     * Linhas extras (order bumps) — o produto principal fica em product/offer/subscription_plan.
+     *
      * @return list<array<string, mixed>>
      */
-    private static function lineItemsFromOrder(Order $order): array
+    private static function orderBumpsFromOrder(Order $order): array
     {
-        $currency = $order->getCurrencyOrDefault();
-
-        if ($order->orderItems->isNotEmpty()) {
-            $lines = [];
-            foreach ($order->orderItems as $item) {
-                $product = $item->product;
-                if (! $product) {
-                    continue;
-                }
-                $isMainLine = (int) ($item->position ?? 0) === 0;
-                $lines[] = self::buildLineItem(
-                    product: $product,
-                    offer: $item->productOffer,
-                    plan: $item->subscriptionPlan,
-                    amount: (float) $item->amount,
-                    currency: $currency,
-                    isMain: $isMainLine,
-                    isOrderBump: ! $isMainLine,
-                );
-            }
-
-            if ($lines !== []) {
-                return $lines;
-            }
-        }
-
-        $product = $order->product;
-        if (! $product) {
+        if ($order->orderItems->isEmpty()) {
             return [];
         }
 
-        return [
-            self::buildLineItem(
-                product: $product,
-                offer: $order->productOffer,
-                plan: $order->subscriptionPlan,
-                amount: (float) $order->amount,
-                currency: $currency,
-                isMain: true,
-                isOrderBump: false,
-            ),
-        ];
-    }
+        $currency = $order->getCurrencyOrDefault();
+        $lines = [];
 
-    /**
-     * @return array<string, mixed>
-     */
-    private static function buildLineItem(
-        Product $product,
-        ?ProductOffer $offer,
-        ?SubscriptionPlan $plan,
-        float $amount,
-        string $currency,
-        bool $isMain,
-        bool $isOrderBump,
-    ): array {
-        return [
-            'product_id' => $product->id,
-            'name' => $product->name,
-            'type' => $product->type,
-            'offer' => self::offerSnapshot($offer),
-            'subscription_plan' => self::planSnapshot($plan),
-            'amount' => $amount,
-            'currency' => $currency,
-            'quantity' => 1,
-            'is_main' => $isMain,
-            'is_order_bump' => $isOrderBump,
-        ];
+        foreach ($order->orderItems as $item) {
+            if ((int) ($item->position ?? 0) === 0) {
+                continue;
+            }
+            $product = $item->product;
+            if (! $product) {
+                continue;
+            }
+            $lines[] = [
+                'product_id' => $product->id,
+                'name' => $product->name,
+                'amount' => (float) $item->amount,
+                'currency' => $currency,
+            ];
+        }
+
+        return $lines;
     }
 
     /**
@@ -384,36 +288,36 @@ class WebhookPayloadBuilder
     private static function trackingFromOrder(Order $order, ?CheckoutSession $session): array
     {
         $meta = is_array($order->metadata) ? $order->metadata : [];
+        $tracking = self::pickTrackingFields($meta);
 
-        $tracking = [
-            'utm_source' => self::stringOrNull($meta['utm_source'] ?? null),
-            'utm_medium' => self::stringOrNull($meta['utm_medium'] ?? null),
-            'utm_campaign' => self::stringOrNull($meta['utm_campaign'] ?? null),
-            'affiliate_code' => $order->affiliateCode(),
-            'sale_channel' => $order->saleChannel(),
-        ];
+        foreach (['utm_source', 'utm_medium', 'utm_campaign'] as $key) {
+            if (($tracking[$key] ?? null) === null) {
+                $tracking[$key] = self::stringOrNull($meta[$key] ?? null);
+            }
+        }
+
+        if ($tracking['affiliate_code'] === null) {
+            $tracking['affiliate_code'] = $order->affiliateCode();
+        }
+        if ($tracking['sale_channel'] === null) {
+            $tracking['sale_channel'] = $order->saleChannel();
+        }
 
         if ($session) {
-            foreach (['utm_source', 'utm_medium', 'utm_campaign'] as $key) {
-                if ($tracking[$key] === null) {
-                    $tracking[$key] = self::stringOrNull($session->{$key} ?? null);
-                }
-            }
-            $sessionMeta = is_array($session->tracking_metadata) ? $session->tracking_metadata : [];
-            foreach ($sessionMeta as $k => $v) {
-                if (! is_string($k) || $k === '') {
-                    continue;
-                }
-                if (! isset($tracking[$k]) || $tracking[$k] === null) {
-                    $tracking[$k] = is_scalar($v) ? trim((string) $v) : null;
-                    if ($tracking[$k] === '') {
-                        $tracking[$k] = null;
-                    }
+            $sessionFields = self::pickTrackingFields([
+                'utm_source' => $session->utm_source,
+                'utm_medium' => $session->utm_medium,
+                'utm_campaign' => $session->utm_campaign,
+                ...(is_array($session->tracking_metadata) ? $session->tracking_metadata : []),
+            ]);
+            foreach ($sessionFields as $key => $value) {
+                if ($value !== null && ($tracking[$key] ?? null) === null) {
+                    $tracking[$key] = $value;
                 }
             }
         }
 
-        return $tracking;
+        return self::filterEmptyTracking($tracking);
     }
 
     /**
@@ -421,33 +325,50 @@ class WebhookPayloadBuilder
      */
     private static function trackingFromSession(CheckoutSession $session): array
     {
-        $tracking = [
-            'utm_source' => self::stringOrNull($session->utm_source),
-            'utm_medium' => self::stringOrNull($session->utm_medium),
-            'utm_campaign' => self::stringOrNull($session->utm_campaign),
-            'affiliate_code' => null,
-            'sale_channel' => null,
-        ];
+        $tracking = self::pickTrackingFields([
+            'utm_source' => $session->utm_source,
+            'utm_medium' => $session->utm_medium,
+            'utm_campaign' => $session->utm_campaign,
+            ...(is_array($session->tracking_metadata) ? $session->tracking_metadata : []),
+        ]);
 
         $sessionMeta = is_array($session->tracking_metadata) ? $session->tracking_metadata : [];
-        foreach ($sessionMeta as $k => $v) {
-            if (! is_string($k) || $k === '') {
-                continue;
-            }
-            if (is_scalar($v)) {
-                $str = trim((string) $v);
-                if ($str !== '') {
-                    $tracking[$k] = $str;
-                }
-            }
-        }
-
         $ref = $sessionMeta['affiliate_ref'] ?? $sessionMeta['ref'] ?? null;
         if (is_string($ref) && trim($ref) !== '') {
             $tracking['affiliate_code'] = AffiliateAttribution::normalizeRef($ref);
         }
 
+        return self::filterEmptyTracking($tracking);
+    }
+
+    /**
+     * @param  array<string, mixed>  $source
+     * @return array<string, ?string>
+     */
+    private static function pickTrackingFields(array $source): array
+    {
+        $tracking = [
+            'affiliate_code' => null,
+            'sale_channel' => null,
+        ];
+
+        foreach (self::TRACKING_KEYS as $key) {
+            $tracking[$key] = self::stringOrNull($source[$key] ?? null);
+        }
+
         return $tracking;
+    }
+
+    /**
+     * @param  array<string, mixed>  $tracking
+     * @return array<string, mixed>
+     */
+    private static function filterEmptyTracking(array $tracking): array
+    {
+        return array_filter(
+            $tracking,
+            fn ($value) => $value !== null && $value !== ''
+        );
     }
 
     private static function stringOrNull(mixed $value): ?string
@@ -479,19 +400,12 @@ class WebhookPayloadBuilder
             'webhook_id' => $context['webhook_id'] ?? 0,
             'order' => [
                 'id' => 90001,
-                'product_id' => $productId,
-                'product_offer_id' => $offerId,
-                'subscription_plan_id' => null,
                 'status' => $eventSlug === 'pedido_pago' ? 'completed' : 'pending',
                 'amount' => 197.0,
                 'currency' => 'BRL',
-                'email' => 'exemplo@email.com',
                 'coupon_code' => null,
-                'gateway' => 'cajupay',
-                'gateway_id' => 'tx_exemplo_123',
-                'metadata' => ['checkout_payment_method' => 'pix'],
+                'is_renewal' => false,
                 'created_at' => now()->toIso8601String(),
-                'updated_at' => now()->toIso8601String(),
             ],
             'customer' => [
                 'name' => 'Cliente Exemplo',
@@ -503,42 +417,16 @@ class WebhookPayloadBuilder
             'product' => [
                 'id' => $productId,
                 'name' => 'MeuLink - Full Anual',
-                'slug' => 'meulink-full',
-                'checkout_slug' => 'exemplo-checkout',
                 'type' => 'area_membros',
                 'billing_type' => 'one_time',
-                'image_url' => null,
             ],
             'offer' => [
                 'id' => $offerId,
-                'product_id' => $productId,
                 'name' => 'Oferta principal',
                 'price' => 197.0,
                 'currency' => 'BRL',
-                'checkout_slug' => null,
             ],
             'subscription_plan' => null,
-            'products' => [
-                [
-                    'product_id' => $productId,
-                    'name' => 'MeuLink - Full Anual',
-                    'type' => 'area_membros',
-                    'offer' => [
-                        'id' => $offerId,
-                        'product_id' => $productId,
-                        'name' => 'Oferta principal',
-                        'price' => 197.0,
-                        'currency' => 'BRL',
-                        'checkout_slug' => null,
-                    ],
-                    'subscription_plan' => null,
-                    'amount' => 197.0,
-                    'currency' => 'BRL',
-                    'quantity' => 1,
-                    'is_main' => true,
-                    'is_order_bump' => false,
-                ],
-            ],
             'payment' => [
                 'method' => 'pix',
                 'gateway' => 'cajupay',
@@ -548,8 +436,6 @@ class WebhookPayloadBuilder
                 'utm_source' => 'instagram',
                 'utm_medium' => 'social',
                 'utm_campaign' => 'lancamento',
-                'affiliate_code' => null,
-                'sale_channel' => 'producer',
             ],
         ];
 
@@ -574,12 +460,9 @@ class WebhookPayloadBuilder
             unset($base['order'], $base['payment']);
             $base['checkout_session'] = [
                 'id' => 1,
-                'session_token' => 'sess-exemplo',
-                'step' => 'form_filled',
-                'product_id' => $productId,
-                'product_offer_id' => $offerId,
                 'email' => 'exemplo@email.com',
                 'name' => 'Cliente Exemplo',
+                'created_at' => now()->toIso8601String(),
             ];
         }
 
@@ -588,17 +471,16 @@ class WebhookPayloadBuilder
             $base['subscription'] = [
                 'id' => 1,
                 'status' => 'active',
-                'product_id' => $productId,
-                'subscription_plan_id' => 1,
+                'effective_status' => 'active',
+                'current_period_start' => now()->toDateString(),
+                'current_period_end' => now()->addMonth()->toDateString(),
             ];
             $base['subscription_plan'] = [
                 'id' => 1,
-                'product_id' => $productId,
                 'name' => 'Plano mensal',
                 'price' => 49.9,
                 'currency' => 'BRL',
                 'interval' => 'monthly',
-                'checkout_slug' => 'exemplo-checkout',
             ];
         }
 

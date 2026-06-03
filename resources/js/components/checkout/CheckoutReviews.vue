@@ -1,5 +1,6 @@
 <script setup>
 import { Star, BadgeCheck } from 'lucide-vue-next';
+import { retryImageOnError } from '@/lib/imageLoadRetry';
 
 const props = defineProps({
     reviews: { type: Array, default: () => [] },
@@ -22,7 +23,7 @@ const props = defineProps({
                         :src="r.photo"
                         :alt="r.author"
                         class="h-12 w-12 shrink-0 rounded-full object-cover"
-                        @error="(e) => e?.target && (e.target.style.display = 'none')"
+                        @error="retryImageOnError"
                     />
                     <div v-else class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gray-200 text-lg font-semibold text-gray-500">
                         {{ (r.author || '?').charAt(0).toUpperCase() }}
@@ -54,7 +55,7 @@ const props = defineProps({
                             :src="r.testimonial_image"
                             alt="Depoimento"
                             class="mt-3 max-w-full rounded-lg border border-gray-100 object-cover"
-                            @error="(e) => e?.target && (e.target.style.display = 'none')"
+                            @error="retryImageOnError"
                         />
                     </div>
                 </div>

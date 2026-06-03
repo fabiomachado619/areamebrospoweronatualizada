@@ -22,7 +22,7 @@ class CheckoutSession extends Model
         'tenant_id', 'product_id', 'product_offer_id', 'subscription_plan_id',
         'checkout_slug', 'session_token', 'step', 'form_started_at', 'form_filled_at',
         'email', 'name',
-        'customer_ip', 'order_id', 'utm_source', 'utm_medium', 'utm_campaign',
+        'customer_ip', 'country_code', 'order_id', 'utm_source', 'utm_medium', 'utm_campaign',
         'tracking_metadata',
         'abandoned_webhook_fired_at',
         'recovery_email_stage', 'recovery_email_last_sent_at', 'recovery_email_next_at',

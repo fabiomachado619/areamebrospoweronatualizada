@@ -25,6 +25,7 @@ import {
 } from 'lucide-vue-next';
 import { useSidebar } from '@/composables/useSidebar';
 import { isNavItemActive } from '@/lib/nav';
+import { retryImageOnError } from '@/lib/imageLoadRetry';
 import ConquistasWidget from '@/components/layout/ConquistasWidget.vue';
 import PwaInstallButton from '@/components/layout/PwaInstallButton.vue';
 import BetaBadge from '@/components/ui/BetaBadge.vue';
@@ -200,12 +201,14 @@ function closeFlyout() {
                                 :alt="appName()"
                                 class="max-h-9 max-w-[148px] object-contain object-left"
                                 :class="appSettings().app_logo_dark ? 'dark:hidden' : ''"
+                                @error="retryImageOnError"
                             />
                             <img
                                 v-if="appSettings().app_logo_dark"
                                 :src="appSettings().app_logo_dark"
                                 :alt="appName()"
                                 class="hidden max-h-9 max-w-[148px] object-contain object-left dark:block"
+                                @error="retryImageOnError"
                             />
                         </div>
                     </template>
@@ -237,12 +240,14 @@ function closeFlyout() {
                             :alt="appName()"
                             class="max-h-8 max-w-8 object-contain"
                             :class="appSettings().app_logo_icon_dark ? 'dark:hidden' : ''"
+                            @error="retryImageOnError"
                         />
                         <img
                             v-if="appSettings().app_logo_icon_dark"
                             :src="appSettings().app_logo_icon_dark"
                             :alt="appName()"
                             class="hidden max-h-8 max-w-8 object-contain dark:block"
+                            @error="retryImageOnError"
                         />
                     </div>
                 </template>

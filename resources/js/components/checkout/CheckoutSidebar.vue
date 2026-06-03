@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import CheckoutBanners from './CheckoutBanners.vue';
 import CheckoutReviews from './CheckoutReviews.vue';
+import { filterContentBlocks, normalizeContentBlocks } from '@/lib/checkoutContentFormats';
 import { Receipt, ShieldCheck } from 'lucide-vue-next';
 
 const INTERVAL_LABELS = {
@@ -32,9 +33,29 @@ const props = defineProps({
     formatPrice: { type: Function, default: (v, c) => String(v) },
 });
 
-const appearance = props.config?.appearance ?? {};
-const primaryColor = appearance.primary_color || '#7427F1';
-const sideBanners = appearance.side_banners ?? [];
+const appearance = computed(() => props.config?.appearance ?? {});
+const primaryColor = computed(() => appearance.value.primary_color || '#7427F1');
+const contentBlocks = computed(() => {
+    const appearanceValue = appearance.value;
+    const raw = appearanceValue.content_blocks;
+    if (Array.isArray(raw)) {
+        return normalizeContentBlocks(raw);
+    }
+    const blocks = [];
+    for (const url of (appearanceValue.side_banners ?? []).filter(Boolean)) {
+        blocks.push({
+            id: `legacy-side-${blocks.length}`,
+            type: 'image',
+            url,
+            format: 'portrait',
+            placement: 'sidebar',
+            link: '',
+            alt: '',
+        });
+    }
+    return blocks;
+});
+const hasSidebarBlocks = computed(() => filterContentBlocks(contentBlocks.value, { placement: 'sidebar' }).length > 0);
 const footerConfig = computed(() => props.config?.footer ?? {});
 const footerEnabled = computed(() => footerConfig.value?.enabled === true);
 const footerLogoUrl = computed(() => String(footerConfig.value?.logo_url ?? '').trim());
@@ -140,11 +161,10 @@ const productPriceDisplay = computed(() => props.priceInCurrency(productPriceBrl
             </div>
         </div>
         <!-- Banners laterais: apenas no desktop (abaixo do resumo). No mobile aparecem no final da página. -->
-        <div v-if="sideBanners.filter(Boolean).length" class="hidden lg:block" data-checkout="sidebar-banners-wrap">
+        <div v-if="hasSidebarBlocks" class="checkout-sidebar-desktop hidden lg:block" data-checkout="sidebar-banners-wrap">
             <CheckoutBanners
-                :urls="sideBanners"
+                :blocks="contentBlocks"
                 placement="side"
-                class-img="w-full h-auto object-cover rounded-2xl shadow-lg"
             />
         </div>
         <CheckoutReviews

@@ -13,6 +13,7 @@ class PanelPushSubscription extends Model
         'endpoint',
         'keys',
         'user_agent',
+        'preferences',
         'push_fail_count',
         'last_push_failed_at',
     ];
@@ -21,6 +22,7 @@ class PanelPushSubscription extends Model
     {
         return [
             'keys' => 'array',
+            'preferences' => 'array',
             'last_push_failed_at' => 'datetime',
         ];
     }

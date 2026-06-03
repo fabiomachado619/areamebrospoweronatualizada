@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\PanelNotification;
 use App\Models\PanelPushSubscription;
+use App\Support\PanelPushPreferences;
 use App\Support\VapidEnvKeys;
 use Minishlink\WebPush\Subscription;
 use Minishlink\WebPush\VAPID;
@@ -19,12 +20,19 @@ class PanelPushService
      *
      * @param  string  $type  Tipo para o centro de notificações: sale_approved, pix_generated, boleto_generated, etc.
      * @param  string|null  $eventKey  Chave única do evento (ex: order_123). Quando informada, evita duplicar notificação para o mesmo evento.
+     * @param  'pix'|'boleto'|'card'  $category  Categoria para filtrar preferências do usuário (PIX, boleto, cartão/wallets).
      */
-    public function sendAndPersistToTenant(?int $tenantId, string $type, string $title, string $body, ?string $url = null, ?string $eventKey = null): int
-    {
+    public function sendAndPersistToTenant(
+        ?int $tenantId,
+        string $type,
+        string $title,
+        string $body,
+        ?string $url = null,
+        ?string $eventKey = null,
+        string $category = 'pix'
+    ): int {
         $subscriptions = PanelPushSubscription::where('tenant_id', $tenantId)->get();
         $userIds = $subscriptions->pluck('user_id')->unique()->filter()->values();
-        $anyNewNotification = false;
 
         foreach ($userIds as $userId) {
             $attrs = [
@@ -36,30 +44,25 @@ class PanelPushService
                 'url' => $url,
             ];
             if ($eventKey !== null && $eventKey !== '') {
-                $notification = PanelNotification::firstOrCreate(
+                PanelNotification::firstOrCreate(
                     [
                         'user_id' => $userId,
                         'event_key' => $eventKey,
                     ],
                     array_merge($attrs, ['event_key' => $eventKey])
                 );
-                if ($notification->wasRecentlyCreated) {
-                    $anyNewNotification = true;
-                }
             } else {
                 PanelNotification::create($attrs);
-                $anyNewNotification = true;
             }
         }
 
-        if ($eventKey !== null && $eventKey !== '' && ! $anyNewNotification) {
-            return 0;
-        }
-
-        return $this->sendToTenant($tenantId, $title, $body, $url);
+        return $this->sendToTenant($tenantId, $title, $body, $url, $category);
     }
 
-    public function sendToTenant(?int $tenantId, string $title, string $body, ?string $url = null): int
+    /**
+     * @param  'pix'|'boleto'|'card'  $category
+     */
+    public function sendToTenant(?int $tenantId, string $title, string $body, ?string $url = null, string $category = 'pix'): int
     {
         $vapidPublic = VapidEnvKeys::normalize(config('getfy.pwa.vapid_public'));
         $vapidPrivate = VapidEnvKeys::normalize(config('getfy.pwa.vapid_private'));
@@ -70,6 +73,11 @@ class PanelPushService
         }
 
         $subscriptions = PanelPushSubscription::where('tenant_id', $tenantId)->get();
+        $subscriptions = $subscriptions->filter(function (PanelPushSubscription $sub) use ($category) {
+            $prefs = PanelPushPreferences::normalize($sub->preferences);
+
+            return PanelPushPreferences::allowsCategory($prefs, $category);
+        })->values();
         if ($subscriptions->isEmpty()) {
             Log::warning('PanelPushService: nenhuma inscrição push para o tenant (usuário deve permitir notificações no painel)', ['tenant_id' => $tenantId]);
             return 0;

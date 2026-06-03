@@ -250,7 +250,15 @@ function setupGtag(pixels) {
 }
 
 /** Domínios permitidos para script src em pixels customizados (evita XSS). */
-const ALLOWED_SCRIPT_ORIGINS = ['https://www.googletagmanager.com', 'https://connect.facebook.net', 'https://analytics.tiktok.com', 'https://js.stripe.com'];
+const ALLOWED_SCRIPT_ORIGINS = [
+    'https://www.googletagmanager.com',
+    'https://connect.facebook.net',
+    'https://analytics.tiktok.com',
+    'https://js.stripe.com',
+    'https://cdn.cajupay.com.br',
+    'https://cdn.utmify.com.br',
+    'https://challenges.cloudflare.com',
+];
 
 function isAllowedScriptSrc(src) {
     if (!src || typeof src !== 'string') return false;

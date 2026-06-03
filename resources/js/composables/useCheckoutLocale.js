@@ -12,7 +12,8 @@ const FEATURED_CURRENCY_CODES = ['BRL', 'USD', 'EUR'];
  * @param {string} [options.suggestedLocale] - suggested_locale from backend
  * @param {string} [options.suggestedCurrency] - suggested_currency from backend
  * @param {string} [options.storageKey] - e.g. checkout_slug for localStorage keys
- * @param {import('vue').MaybeRefOrGetter<{ enabled?: boolean, locale?: string|null, currency?: string|null }|null|undefined>} [options.checkoutForce] - forçar idioma/moeda do produto (quando sem escolha manual)
+ * @param {import('vue').MaybeRefOrGetter<{ enabled?: boolean, locale?: string|null, currency?: string|null }|null|undefined>} [options.checkoutForce] - forçar idioma do produto (quando sem escolha manual)
+ * @param {import('vue').MaybeRefOrGetter<{ mode?: 'global'|'fixed', currency?: string|null }|null|undefined>} [options.checkoutCurrency] - modo global ou moeda única fixa
  * @param {import('vue').MaybeRefOrGetter<Record<string, number>|null|undefined>} [options.customDisplayPricesByCurrency] - preços fixos por moeda (exibição)
  * @param {import('vue').MaybeRefOrGetter<boolean>} [options.skipCustomDisplayPrices] - ex.: cupom ativo — usa só conversão por taxa
  */
@@ -24,6 +25,7 @@ export function useCheckoutLocale(options = {}) {
         suggestedCurrency = 'BRL',
         storageKey = 'default',
         checkoutForce = null,
+        checkoutCurrency = null,
         customDisplayPricesByCurrency = null,
         skipCustomDisplayPrices = false,
     } = options;
@@ -60,24 +62,52 @@ export function useCheckoutLocale(options = {}) {
     }
 
     const codes = (Array.isArray(currencies) ? currencies : []).map((c) => c?.code).filter(Boolean);
+
+    function clampToAvailableCurrency(code) {
+        const normalized = String(code || 'BRL').toUpperCase();
+        if (codes.includes(normalized)) {
+            return normalized;
+        }
+        if (codes.includes('BRL')) {
+            return 'BRL';
+        }
+
+        return codes[0] || 'BRL';
+    }
+
+    function resolvedFixedCurrencyCode() {
+        const cc = checkoutCurrency != null ? toValue(checkoutCurrency) : null;
+        if (cc?.mode === 'fixed' && cc?.currency) {
+            return clampToAvailableCurrency(cc.currency);
+        }
+        const force = checkoutForce != null ? toValue(checkoutForce) : null;
+        if (force?.enabled && force?.currency) {
+            return clampToAvailableCurrency(force.currency);
+        }
+
+        return null;
+    }
+
     const manual = readManualChoiceFlag();
     const force = checkoutForce != null ? toValue(checkoutForce) : null;
+    const fixedCurrencyCode = resolvedFixedCurrencyCode();
     let initialLocale = suggestedLocale || 'pt_BR';
     let initialCurrency = suggestedCurrency || 'BRL';
-    if (manual) {
+    if (fixedCurrencyCode && !manual) {
+        initialCurrency = fixedCurrencyCode;
+    } else if (manual) {
         initialLocale = getStoredLocale() || initialLocale;
         initialCurrency = getStoredCurrency() || initialCurrency;
     } else if (force && force.enabled) {
         if (force.locale && SUPPORTED_LOCALES.includes(force.locale)) {
             initialLocale = force.locale;
         }
-        if (force.currency && codes.includes(force.currency)) {
-            initialCurrency = force.currency;
-        }
     } else if (typeof window !== 'undefined') {
         initialLocale = getStoredLocale() || initialLocale;
         initialCurrency = getStoredCurrency() || initialCurrency;
     }
+
+    initialCurrency = clampToAvailableCurrency(initialCurrency);
 
     const locale = ref(initialLocale);
     const currency = ref(initialCurrency);
@@ -106,8 +136,16 @@ export function useCheckoutLocale(options = {}) {
     }
 
     function setCurrency(v) {
-        const codes = currencies.map((c) => c.code);
-        if (codes.includes(v)) currency.value = v;
+        const fixed = resolvedFixedCurrencyCode();
+        if (fixed) {
+            currency.value = fixed;
+
+            return;
+        }
+        const normalized = clampToAvailableCurrency(v);
+        if (codes.includes(normalized)) {
+            currency.value = normalized;
+        }
     }
 
     function t(key) {
@@ -138,10 +176,10 @@ export function useCheckoutLocale(options = {}) {
     );
 
     /** Converte preço em BRL para a moeda selecionada (price_brl * rate_to_brl), ou valor fixo do produto quando configurado. */
-    function priceInCurrency(priceBrl) {
+    function priceInCurrency(priceBrl, forCode) {
         const n = Number(priceBrl);
         if (Number.isNaN(n)) return 0;
-        const code = currency.value;
+        const code = forCode ?? currency.value;
         if (!toValue(skipCustomDisplayPrices) && code && code !== 'BRL') {
             const map = toValue(customDisplayPricesByCurrency);
             if (map && typeof map === 'object') {
@@ -152,7 +190,10 @@ export function useCheckoutLocale(options = {}) {
                 }
             }
         }
-        const obj = currentCurrencyObj.value;
+        const obj =
+            currencyList.value.find((c) => c.code === code) ||
+            currencyList.value[0] ||
+            { code: 'BRL', symbol: 'R$', label: 'Real', rate_to_brl: 1 };
         const rate = Number(obj.rate_to_brl);
         if (!rate || rate <= 0 || Number.isNaN(rate)) {
             return Math.round(n * 100) / 100;

@@ -15,6 +15,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ProductOffer;
+use App\Support\CheckoutQueryResolver;
 use App\Models\CheckoutSession;
 use App\Models\ProductOrderBump;
 use App\Models\Setting;
@@ -29,12 +30,16 @@ use App\Services\PaymentService;
 use App\Services\PushinPayPixRecorrenteService;
 use App\Support\CajuPayLocale;
 use App\Support\CheckoutCardContract;
+use App\Support\CheckoutConfigNormalizer;
 use App\Support\CheckoutCurrencyCatalog;
+use App\Support\CheckoutCurrencyMode;
 use App\Support\CheckoutCustomPriceByCurrency;
 use App\Support\CheckoutPaymentMethodOrder;
 use App\Support\CheckoutTranslations;
 use App\Support\FakeConsumerData;
 use App\Support\MetaPurchaseTracking;
+use App\Support\PendingPixCheckoutResolver;
+use App\Support\PixCheckoutDisplay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -126,32 +131,26 @@ class CheckoutController extends Controller
         // No checkout principal: offer_id ou plan_id na URL pré-seleciona oferta/plano (mesmo checkout, link diferente por oferta/plano).
         // Para assinatura sem plan_id, usa o plano base (menor position) como padrão.
         if ($resolved['offer'] === null && $resolved['plan'] === null && $product->checkout_slug === $slug) {
-            $offerId = $request->integer('offer_id', 0) ?: null;
-            $planId = $request->integer('plan_id', 0) ?: null;
-            if ($offerId) {
-                $offer = ProductOffer::where('id', $offerId)->where('product_id', $product->id)->first();
-                if ($offer) {
-                    $resolved = [
-                        'product' => $product,
-                        'offer' => $offer,
-                        'plan' => null,
-                        'amount' => (float) $offer->price,
-                        'currency' => $offer->getCurrencyOrDefault(),
-                        'checkout_slug' => $product->checkout_slug,
-                    ];
-                }
-            } elseif ($planId) {
-                $plan = SubscriptionPlan::where('id', $planId)->where('product_id', $product->id)->first();
-                if ($plan) {
-                    $resolved = [
-                        'product' => $product,
-                        'offer' => null,
-                        'plan' => $plan,
-                        'amount' => (float) $plan->price,
-                        'currency' => $plan->getCurrencyOrDefault(),
-                        'checkout_slug' => $product->checkout_slug,
-                    ];
-                }
+            $offer = CheckoutQueryResolver::resolveOffer($product, $request);
+            $plan = CheckoutQueryResolver::resolvePlan($product, $request);
+            if ($offer) {
+                $resolved = [
+                    'product' => $product,
+                    'offer' => $offer,
+                    'plan' => null,
+                    'amount' => (float) $offer->price,
+                    'currency' => $offer->getCurrencyOrDefault(),
+                    'checkout_slug' => $product->checkout_slug,
+                ];
+            } elseif ($plan) {
+                $resolved = [
+                    'product' => $product,
+                    'offer' => null,
+                    'plan' => $plan,
+                    'amount' => (float) $plan->price,
+                    'currency' => $plan->getCurrencyOrDefault(),
+                    'checkout_slug' => $product->checkout_slug,
+                ];
             } elseif (($product->billing_type ?? Product::BILLING_ONE_TIME) === Product::BILLING_SUBSCRIPTION) {
                 $basePlan = SubscriptionPlan::where('product_id', $product->id)->orderBy('position')->first();
                 if ($basePlan) {
@@ -176,6 +175,7 @@ class CheckoutController extends Controller
         } elseif ($resolved['plan'] && $resolved['plan']->checkout_config !== null && $resolved['plan']->checkout_config !== []) {
             $config = array_replace_recursive($config, $resolved['plan']->checkout_config);
         }
+        $config = CheckoutConfigNormalizer::normalize($config);
         // Cobrança Pagar.me (modo empresa) vem só do produto — não herdar de oferta/plano.
         $productPagarmeBilling = $product->checkout_config['pagarme_billing'] ?? [];
         $config['pagarme_billing'] = array_replace_recursive(
@@ -221,15 +221,15 @@ class CheckoutController extends Controller
         $payload['suggested_country_code'] = $suggestions['country_code'] ?? null;
 
         $force = $config['checkout_force'] ?? [];
+        $currencyMode = CheckoutCurrencyMode::resolve($config);
         if (! empty($force['enabled']) && is_array($force)) {
             $fl = isset($force['locale']) ? trim((string) $force['locale']) : '';
-            $fc = isset($force['currency']) ? strtoupper(trim((string) $force['currency'])) : '';
             if (in_array($fl, ['pt_BR', 'en', 'es'], true)) {
                 $payload['suggested_locale'] = $fl;
             }
-            if ($fc !== '') {
-                $payload['suggested_currency'] = $fc;
-            }
+        }
+        if ($currencyMode['mode'] === 'fixed') {
+            $payload['suggested_currency'] = $currencyMode['currency'];
         }
 
         $tenantId = $product->tenant_id;
@@ -244,14 +244,17 @@ class CheckoutController extends Controller
         $currencies = $currenciesRaw
             ? (is_string($currenciesRaw) ? json_decode($currenciesRaw, true) : $currenciesRaw)
             : config('products.currencies');
-        $payload['currencies'] = CheckoutCurrencyCatalog::currenciesForCheckout(
-            is_array($currencies) ? $currencies : (array) config('products.currencies')
+        $payload['currencies'] = CheckoutCurrencyMode::filterCurrenciesForCheckout(
+            $config,
+            CheckoutCurrencyCatalog::currenciesForCheckout(
+                is_array($currencies) ? $currencies : (array) config('products.currencies')
+            )
         );
 
         $payload['product'] = $this->addPricesInCurrencies($productArray, $payload['currencies']);
         $paymentOrderCountry = $payload['suggested_country_code'] ?? null;
-        $forcedCur = isset($force['currency']) ? strtoupper(trim((string) ($force['currency'] ?? ''))) : '';
-        if (! empty($force['enabled']) && $forcedCur !== '' && $forcedCur !== 'BRL') {
+        $forcedCur = $currencyMode['mode'] === 'fixed' ? $currencyMode['currency'] : '';
+        if ($forcedCur !== '' && $forcedCur !== 'BRL') {
             $paymentOrderCountry = 'US';
         }
         $payload['available_payment_methods'] = CheckoutPaymentMethodOrder::applyForCountry(
@@ -260,10 +263,15 @@ class CheckoutController extends Controller
         );
         $payload['product']['custom_display_prices_by_currency'] = $this->customDisplayPricesMap($product);
         $productCheckout = $product->checkout_config ?? [];
+        $defaultsCfg = Product::defaultCheckoutConfig();
         $payload['product']['checkout_config'] = [
             'checkout_force' => array_replace_recursive(
-                Product::defaultCheckoutConfig()['checkout_force'] ?? ['enabled' => false, 'locale' => null, 'currency' => null],
+                $defaultsCfg['checkout_force'] ?? ['enabled' => false, 'locale' => null, 'currency' => null],
                 is_array($productCheckout['checkout_force'] ?? null) ? $productCheckout['checkout_force'] : []
+            ),
+            'checkout_currency' => array_replace_recursive(
+                $defaultsCfg['checkout_currency'] ?? ['mode' => 'global', 'currency' => 'BRL'],
+                is_array($productCheckout['checkout_currency'] ?? null) ? $productCheckout['checkout_currency'] : []
             ),
         ];
         $payload['card_payee_code'] = '';
@@ -403,6 +411,9 @@ class CheckoutController extends Controller
         $affiliateRef = \App\Support\AffiliateAttribution::refFromRequest($request);
         $trackingMeta = \App\Support\AffiliateAttribution::mergeIntoTrackingMetadata($trackingMeta, $affiliateRef);
 
+        $geoSuggestions = app(\App\Services\GeoIp::class)->getSuggestionsForRequest($request);
+        $sessionCountryCode = $geoSuggestions['country_code'] ?? null;
+
         CheckoutSession::create([
             'tenant_id' => $product->tenant_id,
             'product_id' => $product->id,
@@ -412,6 +423,9 @@ class CheckoutController extends Controller
             'session_token' => $sessionToken,
             'step' => CheckoutSession::STEP_VISIT,
             'customer_ip' => $request->ip(),
+            'country_code' => is_string($sessionCountryCode) && strlen($sessionCountryCode) === 2
+                ? strtoupper($sessionCountryCode)
+                : null,
             'utm_source' => $utmSource,
             'utm_medium' => $utmMedium,
             'utm_campaign' => $utmCampaign,
@@ -749,6 +763,8 @@ class CheckoutController extends Controller
             \App\Support\AffiliateAttribution::metadataAttributes($product, $affiliateRefForOrder)
         );
 
+        $orderCountryCode = $this->resolveBillingCountryForCheckout($request, $validated);
+
         $orderPayload = [
             'tenant_id' => $tenantId,
             'user_id' => $user->id,
@@ -764,6 +780,7 @@ class CheckoutController extends Controller
             'cpf' => $validated['cpf'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'customer_ip' => $request->ip(),
+            'country_code' => $orderCountryCode,
             'coupon_code' => $couponCode,
             'metadata' => $orderMetadata,
         ];
@@ -796,7 +813,7 @@ class CheckoutController extends Controller
             $order->grantPurchasedProductAccessToBuyer();
         };
 
-        $updateCheckoutSession = function (Order $order) use ($validated, $product) {
+        $updateCheckoutSession = function (Order $order) use ($validated, $product, $request) {
             $utmFromRequest = $this->utmPayloadFromValidated($validated);
             $trackingFromRequest = $this->trackingPayloadFromValidated($validated);
             $token = $validated['checkout_session_token'] ?? null;
@@ -805,9 +822,13 @@ class CheckoutController extends Controller
                 if ($session) {
                     $mergedUtms = $this->mergeSessionUtms($session, $utmFromRequest);
                     $mergedTracking = $this->mergeSessionTrackingMetadata($session, $trackingFromRequest);
+                    $sessionCountry = $order->country_code
+                        ?? $session->country_code
+                        ?? $this->resolveBillingCountryForCheckout($request, $validated);
                     $session->update(array_merge([
                         'step' => CheckoutSession::STEP_CONVERTED,
                         'order_id' => $order->id,
+                        'country_code' => $sessionCountry,
                     ], $mergedUtms, ['tracking_metadata' => $mergedTracking]));
                     $this->persistOrderUtms($order, $mergedUtms);
                     $this->persistOrderTrackingMetadata($order, $mergedTracking);
@@ -844,6 +865,10 @@ class CheckoutController extends Controller
             $pixLockKey = 'checkout_pix_generation_lock:'.$pixLockSuffix;
             // Lock antes de criar o pedido: evita dois pedidos/PIX no duplo clique ou retry paralelo.
             if (! Cache::add($pixLockKey, 1, now()->addSeconds(60))) {
+                $reusable = PendingPixCheckoutResolver::findReusable($request);
+                if ($reusable) {
+                    return PendingPixCheckoutResolver::redirectToPixPage($reusable, $request);
+                }
                 if ($request->expectsJson()) {
                     return response()->json([
                         'success' => false,
@@ -893,11 +918,7 @@ class CheckoutController extends Controller
                 $updateCheckoutSession($order);
                 $redirectUrl = $product->checkout_config['redirect_after_purchase'] ?? null;
                 $redirectUrl = ! empty($redirectUrl) && is_string($redirectUrl) ? $redirectUrl : null;
-                $pixToken = \Illuminate\Support\Str::random(32);
-                session()->put('pix_display.' . $pixToken, [
-                    'order_id' => $order->id,
-                    'qrcode' => $pixResult['qrcode'] ?? null,
-                    'copy_paste' => $pixResult['copy_paste'] ?? null,
+                $pixToken = PixCheckoutDisplay::persistAndStoreSession($order, $pixResult, [
                     'amount' => $totalAmount,
                     'product_name' => $product->name,
                     'checkout_slug' => $checkoutSlug,
@@ -905,7 +926,6 @@ class CheckoutController extends Controller
                     'customer_name' => $validated['name'] ?? null,
                     'customer_email' => $validated['email'] ?? null,
                     'customer_phone' => $validated['phone'] ?? null,
-                    'created_at' => time(),
                 ]);
                 if ($request->expectsJson()) {
                     return $this->idempotencyReturn($idempotencyKey, response()->json([
@@ -1028,11 +1048,10 @@ class CheckoutController extends Controller
                     }
                     $redirectUrl = $product->checkout_config['redirect_after_purchase'] ?? null;
                     $redirectUrl = ! empty($redirectUrl) && is_string($redirectUrl) ? $redirectUrl : null;
-                    $pixToken = Str::random(32);
-                    session()->put('pix_display.' . $pixToken, [
-                        'order_id' => $order->id,
+                    $pixToken = PixCheckoutDisplay::persistAndStoreSession($order, [
                         'qrcode' => $qrcodeImage,
                         'copy_paste' => $copyPaste ?? '',
+                    ], [
                         'amount' => $totalAmount,
                         'product_name' => $product->name,
                         'checkout_slug' => $checkoutSlug,
@@ -1040,7 +1059,6 @@ class CheckoutController extends Controller
                         'customer_name' => $validated['name'] ?? null,
                         'customer_email' => $validated['email'] ?? null,
                         'customer_phone' => $validated['phone'] ?? null,
-                        'created_at' => time(),
                     ]);
                     return $this->idempotencyReturn($idempotencyKey, redirect()->route('checkout.pix', ['token' => $pixToken]));
                 } catch (\Throwable $e) {
@@ -1178,11 +1196,10 @@ class CheckoutController extends Controller
                     }
                     $redirectUrl = $product->checkout_config['redirect_after_purchase'] ?? null;
                     $redirectUrl = ! empty($redirectUrl) && is_string($redirectUrl) ? $redirectUrl : null;
-                    $pixToken = Str::random(32);
-                    session()->put('pix_display.' . $pixToken, [
-                        'order_id' => $order->id,
+                    $pixToken = PixCheckoutDisplay::persistAndStoreSession($order, [
                         'qrcode' => $qrcodeImage,
                         'copy_paste' => $copyPaste ?? '',
+                    ], [
                         'amount' => $totalAmount,
                         'product_name' => $product->name,
                         'checkout_slug' => $checkoutSlug,
@@ -1190,7 +1207,6 @@ class CheckoutController extends Controller
                         'customer_name' => $validated['name'] ?? null,
                         'customer_email' => $validated['email'] ?? null,
                         'customer_phone' => $validated['phone'] ?? null,
-                        'created_at' => time(),
                     ]);
 
                     return $this->idempotencyReturn($idempotencyKey, redirect()->route('checkout.pix', ['token' => $pixToken]));
@@ -2036,6 +2052,7 @@ class CheckoutController extends Controller
             'cpf' => $cpfDigits,
             'phone' => $phone,
             'customer_ip' => $request->ip(),
+            'country_code' => $this->resolveBillingCountryForCheckout($request, $validated),
             'coupon_code' => $draft['coupon_code'] ?? null,
             'metadata' => $orderMetadata,
             'status' => 'pending',
@@ -2220,6 +2237,7 @@ class CheckoutController extends Controller
             'cpf' => $validated['cpf'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'customer_ip' => $request->ip(),
+            'country_code' => $this->resolveBillingCountryForCheckout($request, $validated),
             'coupon_code' => $couponCode,
             'metadata' => $orderMetadata,
             'status' => 'pending',
@@ -2274,7 +2292,7 @@ class CheckoutController extends Controller
         return $product->checkout_config;
     }
 
-    private const PIX_EXPIRY_SECONDS = 900; // 15 min
+    private const PIX_EXPIRY_SECONDS = PixCheckoutDisplay::EXPIRY_SECONDS;
 
     /**
      * Página de PIX gerado (dados vindos da sessão, identificado por token aleatório).
@@ -2735,6 +2753,14 @@ class CheckoutController extends Controller
         $fromRequest = isset($validated['billing_country']) ? strtoupper(trim((string) $validated['billing_country'])) : '';
         if (strlen($fromRequest) === 2) {
             return $fromRequest;
+        }
+
+        $token = trim((string) ($validated['checkout_session_token'] ?? ''));
+        if ($token !== '') {
+            $sessionCountry = CheckoutSession::where('session_token', $token)->value('country_code');
+            if (is_string($sessionCountry) && strlen($sessionCountry) === 2) {
+                return strtoupper($sessionCountry);
+            }
         }
 
         $geo = app(GeoIp::class);

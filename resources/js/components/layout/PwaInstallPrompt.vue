@@ -263,7 +263,7 @@ onUnmounted(() => {
                             Permitir notificações?
                         </h3>
                         <p class="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                            Receba avisos de novas vendas, PIX gerados e outras atualizações no {{ appName }}.
+                            Receba avisos de novas vendas (PIX, boleto, cartão, Apple Pay e Google Pay) no {{ appName }}.
                         </p>
                         <div class="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
                             <button

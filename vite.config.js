@@ -28,7 +28,7 @@ export default defineConfig({
         },
     },
     optimizeDeps: {
-        include: ['pdfjs-dist'],
+        include: ['pdfjs-dist', '@svg-maps/world'],
     },
     server: {
         watch: {

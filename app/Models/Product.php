@@ -95,8 +95,10 @@ class Product extends Model
             'appearance' => [
                 'background_color' => '#E3E3E3',
                 'primary_color' => '#0ea5e9',
+                'order_bump_color' => '#F59E0B',
                 'banners' => [],
                 'side_banners' => [],
+                'content_blocks' => [],
             ],
             'timer' => [
                 'enabled' => false,
@@ -162,6 +164,10 @@ class Product extends Model
                 'enabled' => false,
                 'locale' => null,
                 'currency' => null,
+            ],
+            'checkout_currency' => [
+                'mode' => 'global',
+                'currency' => 'BRL',
             ],
             'custom_prices_by_currency' => [
                 'enabled' => false,

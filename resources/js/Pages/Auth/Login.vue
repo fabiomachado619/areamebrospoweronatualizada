@@ -4,6 +4,7 @@ import { useForm, Link, usePage } from '@inertiajs/vue3';
 import { Eye, EyeOff, Mail, Lock, ArrowRight } from 'lucide-vue-next';
 import Button from '@/components/ui/Button.vue';
 import ThemeToggler from '@/components/layout/ThemeToggler.vue';
+import { retryImageOnError } from '@/lib/imageLoadRetry';
 
 const showPassword = ref(false);
 const page = usePage();
@@ -57,11 +58,13 @@ function submit() {
                     :src="logoLight"
                     :alt="appName"
                     class="h-11 max-w-[200px] object-contain object-left dark:hidden"
+                    @error="retryImageOnError"
                 />
                 <img
                     :src="logoDark"
                     :alt="appName"
                     class="hidden h-11 max-w-[200px] object-contain object-left dark:block"
+                    @error="retryImageOnError"
                 />
                 <ThemeToggler />
             </header>
@@ -222,7 +225,7 @@ function submit() {
                     background: `linear-gradient(135deg, color-mix(in srgb, ${primary} 18%, transparent) 0%, transparent 45%, rgba(24, 24, 27, 0.15) 100%)`,
                 }"
             />
-            <img :src="heroImage" alt="" class="h-full w-full object-cover" />
+            <img :src="heroImage" alt="" class="h-full w-full object-cover" @error="retryImageOnError" />
             <div class="absolute inset-0 bg-gradient-to-t from-zinc-900/50 via-zinc-900/10 to-transparent" />
             <div class="absolute bottom-10 left-10 right-10 max-w-md">
                 <p class="text-sm font-medium uppercase tracking-[0.2em] text-white/70">

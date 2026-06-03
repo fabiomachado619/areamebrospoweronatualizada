@@ -23,6 +23,7 @@ use App\Services\PushinPayPixRecorrenteService;
 use App\Services\StorageService;
 use App\Support\FakeConsumerData;
 use App\Support\MetaPurchaseTracking;
+use App\Support\PixCheckoutDisplay;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -469,15 +470,13 @@ class ApiCheckoutController extends Controller
                         'transaction_id' => $txid,
                     ]));
 
-                    $pixToken = Str::random(32);
-                    session()->put('pix_display.' . $pixToken, [
-                        'order_id' => $order->id,
+                    $pixToken = PixCheckoutDisplay::persistAndStoreSession($order, [
                         'qrcode' => $qrcodeImage,
                         'copy_paste' => $copyPaste ?? '',
+                    ], [
                         'amount' => $amount,
                         'product_name' => $product?->name ?? 'Pagamento',
                         'redirect_after_purchase' => route('api-checkout.thank-you', ['order_id' => $order->id]),
-                        'created_at' => time(),
                     ]);
                     return redirect()->route('checkout.pix', ['token' => $pixToken]);
                 }
@@ -568,15 +567,13 @@ class ApiCheckoutController extends Controller
                         'transaction_id' => $txid,
                     ]));
 
-                    $pixToken = Str::random(32);
-                    session()->put('pix_display.' . $pixToken, [
-                        'order_id' => $order->id,
+                    $pixToken = PixCheckoutDisplay::persistAndStoreSession($order, [
                         'qrcode' => $qrcodeImage,
                         'copy_paste' => $copyPaste ?? '',
+                    ], [
                         'amount' => $amount,
                         'product_name' => $product?->name ?? 'Pagamento',
                         'redirect_after_purchase' => route('api-checkout.thank-you', ['order_id' => $order->id]),
-                        'created_at' => time(),
                     ]);
                     return redirect()->route('checkout.pix', ['token' => $pixToken]);
                 }
@@ -598,15 +595,10 @@ class ApiCheckoutController extends Controller
                     'copy_paste' => $result['copy_paste'] ?? null,
                     'transaction_id' => $result['transaction_id'] ?? null,
                 ]));
-                $pixToken = Str::random(32);
-                session()->put('pix_display.' . $pixToken, [
-                    'order_id' => $order->id,
-                    'qrcode' => $result['qrcode'] ?? null,
-                    'copy_paste' => $result['copy_paste'] ?? null,
+                $pixToken = PixCheckoutDisplay::persistAndStoreSession($order, $result, [
                     'amount' => $amount,
                     'product_name' => $product?->name ?? 'Pagamento',
                     'redirect_after_purchase' => route('api-checkout.thank-you', ['order_id' => $order->id]),
-                    'created_at' => time(),
                 ]);
                 return redirect()->route('checkout.pix', ['token' => $pixToken]);
             } catch (\Throwable $e) {

@@ -2,14 +2,17 @@
 
 namespace App\Models;
 
+use App\Support\CheckoutPublicId;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class ProductOffer extends Model
 {
     protected $fillable = [
         'product_id',
+        'public_id',
         'name',
         'price',
         'currency',
@@ -26,6 +29,15 @@ class ProductOffer extends Model
             'checkout_config' => 'array',
             'combo_product_ids' => 'array',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::creating(function (ProductOffer $offer) {
+            if (empty($offer->public_id)) {
+                $offer->public_id = CheckoutPublicId::generateUnique();
+            }
+        });
     }
 
     /**
@@ -56,5 +68,21 @@ class ProductOffer extends Model
     public function getCurrencyOrDefault(): string
     {
         return $this->currency ?? $this->product?->currency ?? 'BRL';
+    }
+
+    public function ensurePublicId(): ?string
+    {
+        if (! Schema::hasColumn($this->getTable(), 'public_id')) {
+            return $this->public_id;
+        }
+
+        if (! empty($this->public_id)) {
+            return $this->public_id;
+        }
+
+        $this->public_id = CheckoutPublicId::generateUnique();
+        $this->saveQuietly();
+
+        return $this->public_id;
     }
 }

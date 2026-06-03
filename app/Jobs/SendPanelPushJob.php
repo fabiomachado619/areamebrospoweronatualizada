@@ -24,7 +24,8 @@ class SendPanelPushJob implements ShouldQueue
         public string $title,
         public string $body,
         public ?string $url = null,
-        public ?string $eventKey = null
+        public ?string $eventKey = null,
+        public string $category = 'pix'
     ) {}
 
     public function handle(PanelPushService $panelPushService): void
@@ -36,7 +37,8 @@ class SendPanelPushJob implements ShouldQueue
                 $this->title,
                 $this->body,
                 $this->url,
-                $this->eventKey
+                $this->eventKey,
+                $this->category
             );
         } catch (\Throwable $e) {
             Log::warning('SendPanelPushJob: failed', [

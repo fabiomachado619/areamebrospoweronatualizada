@@ -13,7 +13,11 @@
     RewriteCond %{HTTP:x-xsrf-token} .
     RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
 
-    # Storage: sempre pelo Laravel (sem depender de symlink public/storage)
+    # Storage: servir arquivo estático quando public/storage (symlink) existir
+    RewriteCond %{REQUEST_FILENAME} -f
+    RewriteRule ^storage/ - [L]
+
+    # Storage: fallback via Laravel (StorageServeController, sem depender de symlink)
     RewriteRule ^storage/ index.php [L]
 
     # Favicon da marca: versão otimizada 32px via Laravel (evita PNG grande em branco na aba)

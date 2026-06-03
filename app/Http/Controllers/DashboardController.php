@@ -131,7 +131,9 @@ class DashboardController extends Controller
         $data = new \ArrayObject($payload);
         event(new DashboardLoading($data));
 
-        return Inertia::render('Dashboard/Index', $data->getArrayCopy());
+        return Inertia::render('Dashboard/Index', array_merge($data->getArrayCopy(), [
+            'layoutFullWidth' => true,
+        ]));
     }
 
     private function gatewayLabel(?string $gateway): string

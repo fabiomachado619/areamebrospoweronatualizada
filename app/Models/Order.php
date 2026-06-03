@@ -12,7 +12,7 @@ class Order extends Model
     protected $fillable = [
         'tenant_id', 'user_id', 'product_id', 'product_offer_id', 'subscription_plan_id',
         'api_application_id', 'api_checkout_session_id',
-        'status', 'amount', 'currency', 'email', 'cpf', 'phone', 'customer_ip', 'coupon_code',
+        'status', 'amount', 'currency', 'email', 'cpf', 'phone', 'customer_ip', 'country_code', 'coupon_code',
         'gateway', 'gateway_id', 'approved_manually', 'metadata', 'period_start', 'period_end', 'is_renewal',
         'recovery_email_stage', 'recovery_email_last_sent_at', 'recovery_email_next_at',
     ];

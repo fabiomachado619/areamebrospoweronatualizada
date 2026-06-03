@@ -3,29 +3,31 @@
 namespace App\Listeners;
 
 use App\Events\PixGenerated;
-use App\Jobs\SendPanelPushJob;
+use App\Services\PanelPushService;
+use App\Support\PanelOrderPushMessages;
 use Illuminate\Support\Facades\Log;
 
 class SendPanelPushOnPixGenerated
 {
+    public function __construct(
+        private readonly PanelPushService $panelPushService,
+    ) {}
+
     public function handle(PixGenerated $event): void
     {
-        $order = $event->order;
+        $order = $event->order->loadMissing('product');
 
         try {
-            $productName = $order->product?->name ?? 'Produto';
-            $amount = number_format((float) $order->amount, 2, ',', '.');
-            $title = 'PIX gerado!';
-            $body = "{$productName} - R$ {$amount} - Aguardando pagamento";
-            $url = url('/vendas');
+            $message = PanelOrderPushMessages::forPixGenerated($order);
 
-            SendPanelPushJob::dispatchAfterResponse(
+            $this->panelPushService->sendAndPersistToTenant(
                 $order->tenant_id,
                 'pix_generated',
-                $title,
-                $body,
-                $url,
-                'pix_' . $order->id
+                $message['title'],
+                $message['body'],
+                $message['url'],
+                'pix_' . $order->id,
+                $message['category']
             );
         } catch (\Throwable $e) {
             Log::warning('SendPanelPushOnPixGenerated: falha ao enviar push', [

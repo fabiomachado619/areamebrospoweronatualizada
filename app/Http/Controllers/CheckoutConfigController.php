@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\ProductOffer;
 use App\Services\StorageService;
 use App\Models\SubscriptionPlan;
+use App\Support\CheckoutConfigNormalizer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -44,6 +45,8 @@ class CheckoutConfigController extends Controller
             $stored = $produto->checkout_config ?? [];
             $config = array_replace_recursive($defaults, $stored);
         }
+
+        $config = CheckoutConfigNormalizer::normalize($config);
 
         $tenantId = auth()->user()->tenant_id;
         $cupons = Coupon::forTenant($tenantId)
@@ -100,6 +103,7 @@ class CheckoutConfigController extends Controller
         $base = array_replace_recursive($defaults, is_array($stored) ? $stored : []);
         $merged = array_replace_recursive($base, $validated['config']);
         $merged = $this->applyCheckoutConfigIndexedArraysFromRequest($merged, $validated['config']);
+        $merged = CheckoutConfigNormalizer::prepareForStorage($merged);
 
         // Downsell só pode estar ativo se upsell estiver ativo
         if (!($merged['upsell']['enabled'] ?? false)) {
@@ -152,7 +156,23 @@ class CheckoutConfigController extends Controller
         // O navegador resolve / como o host da página atual, então funciona em qualquer ambiente.
         $relativeUrl = '/storage/' . ltrim($path, '/');
 
-        return response()->json(['url' => $relativeUrl], HttpResponse::HTTP_CREATED);
+        $width = null;
+        $height = null;
+        try {
+            $size = @getimagesize($file->getPathname());
+            if (is_array($size)) {
+                $width = (int) ($size[0] ?? 0);
+                $height = (int) ($size[1] ?? 0);
+            }
+        } catch (\Throwable) {
+            // ignore
+        }
+
+        return response()->json([
+            'url' => $relativeUrl,
+            'width' => $width ?: null,
+            'height' => $height ?: null,
+        ], HttpResponse::HTTP_CREATED);
     }
 
     private function authorizeProduct(Product $produto): void
@@ -192,6 +212,11 @@ class CheckoutConfigController extends Controller
             if (array_key_exists('side_banners', $appearance)) {
                 $merged['appearance']['side_banners'] = is_array($appearance['side_banners'])
                     ? array_values($appearance['side_banners'])
+                    : [];
+            }
+            if (array_key_exists('content_blocks', $appearance)) {
+                $merged['appearance']['content_blocks'] = is_array($appearance['content_blocks'])
+                    ? array_values($appearance['content_blocks'])
                     : [];
             }
         }

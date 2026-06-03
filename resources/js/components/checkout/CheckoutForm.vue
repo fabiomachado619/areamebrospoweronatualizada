@@ -5,6 +5,7 @@ import axios from 'axios';
 import { User, UserRound, Mail, ShoppingBag, Loader2, CreditCard, Tag, Check, Pencil, ScanQrCode, Shield, X, AlertCircle, FileText, MapPin } from 'lucide-vue-next';
 import CheckoutDropdown from './CheckoutDropdown.vue';
 import CheckoutOrderBumps from './CheckoutOrderBumps.vue';
+import CheckoutCurrencyPicker from './CheckoutCurrencyPicker.vue';
 import CheckoutPaymentMethods from './CheckoutPaymentMethods.vue';
 import CheckoutTurnstile from './CheckoutTurnstile.vue';
 import AsaasCard from './gateways/asaas/Card.vue';
@@ -122,6 +123,37 @@ function appendCheckoutSecurity(payload) {
         payload['cf-turnstile-response'] = turnstileToken.value;
     }
     return payload;
+}
+
+/** ISO 3166-1 alpha-2 do país do comprador (bandeira do telefone ou geo do servidor). */
+function resolveCheckoutCountryIso() {
+    const iso = String(phoneCountryIso.value || props.suggestedCountryCode || 'BR')
+        .toUpperCase()
+        .trim()
+        .slice(0, 2);
+    return iso.length === 2 ? iso : 'BR';
+}
+
+function appendBillingCountry(payload) {
+    payload.billing_country = resolveCheckoutCountryIso();
+    return payload;
+}
+
+let countryTrackTimeout = null;
+function persistCheckoutCountry() {
+    if (!props.checkoutSessionToken) return;
+    if (countryTrackTimeout) clearTimeout(countryTrackTimeout);
+    countryTrackTimeout = setTimeout(async () => {
+        try {
+            await axios.post('/api/checkout/track-country', {
+                session_token: props.checkoutSessionToken,
+                country_code: resolveCheckoutCountryIso(),
+            });
+        } catch (_) {
+            /* silencioso */
+        }
+        countryTrackTimeout = null;
+    }, 400);
 }
 
 const checkoutIdempotencyStorageKey = computed(() => {
@@ -277,9 +309,13 @@ const props = defineProps({
     /** Preço BRL só do produto principal (sem bumps), para contents do pixel. */
     mainLinePriceBrl: { type: Number, default: 0 },
     checkoutSecurity: { type: Object, default: () => ({ requires_captcha: false, turnstile_site_key: null }) },
+    currencyList: { type: Array, default: () => [] },
+    featuredCurrencies: { type: Array, default: () => [] },
+    otherCurrencies: { type: Array, default: () => [] },
+    priceInCurrency: { type: Function, default: (v) => v },
 });
 
-const emit = defineEmits(['coupon-applied', 'coupon-cleared', 'update:orderBumpIds', 'payment-approved']);
+const emit = defineEmits(['coupon-applied', 'coupon-cleared', 'update:orderBumpIds', 'payment-approved', 'set-currency']);
 
 const customerFields = computed(() => props.config?.customer_fields ?? { name: true, cpf: true, phone: true, coupon: false });
 const showName = computed(() => customerFields.value.name !== false);
@@ -778,6 +814,7 @@ onMounted(() => {
     if (isCajuPaySdkFlow.value) {
         scheduleEnsureCajuPaySession();
     }
+    persistCheckoutCountry();
 });
 
 watch(
@@ -800,6 +837,7 @@ function callTrackApi(step, email, name) {
                 step,
                 email: email || undefined,
                 name: name || undefined,
+                country_code: resolveCheckoutCountryIso(),
             });
         } catch (_) {
             trackStepSent.value[step] = false;
@@ -824,6 +862,84 @@ watch(
     },
     { deep: true }
 );
+
+const trackFieldSent = ref({});
+function callTrackFieldApi(fieldKey, event) {
+    if (!props.checkoutSessionToken) return;
+    const key = `${fieldKey}:${event}`;
+    if (trackFieldSent.value[key]) return;
+    trackFieldSent.value[key] = true;
+    setTimeout(async () => {
+        try {
+            await axios.post('/api/checkout/track-field', {
+                session_token: props.checkoutSessionToken,
+                field_key: fieldKey,
+                event,
+            });
+        } catch (_) {
+            trackFieldSent.value[key] = false;
+        }
+    }, 500);
+}
+
+function onCheckoutFieldFocus(fieldKey) {
+    callTrackFieldApi(fieldKey, 'reached');
+}
+
+watch(
+    () => form.email,
+    (email) => {
+        const v = (email || '').trim();
+        if (v.includes('@') && v.length > 3) {
+            callTrackFieldApi('email', 'reached');
+            callTrackFieldApi('email', 'completed');
+        }
+    }
+);
+
+watch(
+    () => form.name,
+    (name) => {
+        if ((name || '').trim().length > 0) {
+            callTrackFieldApi('name', 'reached');
+            callTrackFieldApi('name', 'completed');
+        }
+    }
+);
+
+watch(
+    () => form.cpf,
+    (cpf) => {
+        if ((cpf || '').replace(/\D/g, '').length >= 11) {
+            callTrackFieldApi('cpf', 'reached');
+            callTrackFieldApi('cpf', 'completed');
+        }
+    }
+);
+
+watch(
+    () => phoneDigits.value,
+    (digits) => {
+        if ((digits || '').length >= 8) {
+            callTrackFieldApi('phone', 'reached');
+            callTrackFieldApi('phone', 'completed');
+        }
+    }
+);
+
+watch(
+    () => form.payment_method,
+    (method) => {
+        if (method) {
+            callTrackFieldApi('payment_method', 'reached');
+            callTrackFieldApi('payment_method', 'completed');
+        }
+    }
+);
+
+watch([phoneCountryIso, () => props.suggestedCountryCode], () => {
+    persistCheckoutCountry();
+});
 
 // PIX/Boleto: abrir formulário para preencher endereço/nome/CPF. PIX automático: se dados já preenchidos, manter resumo (não mostrar inputs). Cartão/outros: colapsar para resumo se dados já preenchidos.
 watch(
@@ -1164,12 +1280,7 @@ function buildCajuPaySessionPayload() {
     if (props.checkoutSessionToken) payload.checkout_session_token = props.checkoutSessionToken;
     if (props.displayCurrency) payload.display_currency = props.displayCurrency;
     if (props.checkoutLocale) payload.checkout_locale = props.checkoutLocale;
-    const country = props.suggestedCountryCode
-        ? String(props.suggestedCountryCode).toUpperCase().trim().slice(0, 2)
-        : '';
-    if (country.length === 2) {
-        payload.billing_country = country;
-    }
+    appendBillingCountry(payload);
     if (Array.isArray(props.orderBumpIds) && props.orderBumpIds.length > 0) {
         payload.order_bump_ids = props.orderBumpIds
             .map((id) => (typeof id === 'number' ? id : parseInt(id, 10)))
@@ -1614,6 +1725,7 @@ function submitCardWithMercadopagoFormData(formData) {
     if (Array.isArray(props.orderBumpIds) && props.orderBumpIds.length > 0) {
         payload.order_bump_ids = props.orderBumpIds.map((id) => (typeof id === 'number' ? id : parseInt(id, 10))).filter((n) => !Number.isNaN(n));
     }
+    appendBillingCountry(payload);
     appendUtms(payload);
     appendCheckoutSecurity(payload);
     return axios.post('/checkout', payload, {
@@ -1947,6 +2059,7 @@ async function postCajuPayConfirmOrder() {
         cpf: showCpf.value ? (form.cpf || '').replace(/\D/g, '') : '',
         phone: showPhone.value ? form.country_code + phoneDigits.value : '',
     };
+    appendBillingCountry(orderPayload);
     appendUtms(orderPayload);
     appendCheckoutSecurity(orderPayload);
     const orderRes = await axios.post('/checkout/cajupay/confirm-order', orderPayload, {
@@ -2098,6 +2211,8 @@ function submit() {
     if (!ensureCaptchaBeforeSubmit()) {
         return;
     }
+    callTrackFieldApi('submit', 'reached');
+    callTrackFieldApi('submit', 'completed');
     const methods = checkoutPaymentMethods.value;
     if (methods.length === 0) {
         form.setError('payment_method', 'Nenhum método de pagamento disponível.');
@@ -2171,6 +2286,7 @@ function submit() {
             if (Array.isArray(props.orderBumpIds) && props.orderBumpIds.length > 0) {
                 payload.order_bump_ids = props.orderBumpIds.map((id) => (typeof id === 'number' ? id : parseInt(id, 10))).filter((n) => !Number.isNaN(n));
             }
+            appendBillingCountry(payload);
             appendUtms(payload);
             appendCheckoutSecurity(payload);
             axios.post('/checkout', payload, {
@@ -2302,6 +2418,7 @@ function submit() {
                 if (Array.isArray(props.orderBumpIds) && props.orderBumpIds.length > 0) {
                     payload.order_bump_ids = props.orderBumpIds.map((id) => (typeof id === 'number' ? id : parseInt(id, 10))).filter((n) => !Number.isNaN(n));
                 }
+                appendBillingCountry(payload);
                 appendUtms(payload);
                 appendCheckoutSecurity(payload);
                 return axios.post('/checkout', payload, {
@@ -2477,6 +2594,7 @@ function submit() {
         payload.address_city = (form.address_city || '').trim();
         payload.address_state = (form.address_state || '').trim().slice(0, 2).toUpperCase();
     }
+    appendBillingCountry(payload);
     appendUtms(payload);
     appendCheckoutSecurity(payload);
     if (paymentMethod === 'pix' || paymentMethod === 'pix_auto' || paymentMethod === 'boleto') {
@@ -2821,7 +2939,20 @@ function submit() {
                 :available-payment-methods="localizedPaymentMethods"
                 :primary-color="primaryColor"
                 :t="t"
-            />
+            >
+                <template #after-header>
+                    <CheckoutCurrencyPicker
+                        v-if="currencyList.length > 1"
+                        :display-currency="displayCurrency"
+                        :currency-list="currencyList"
+                        :featured-currencies="featuredCurrencies"
+                        :other-currencies="otherCurrencies"
+                        :primary-color="primaryColor"
+                        :t="t"
+                        @set-currency="emit('set-currency', $event)"
+                    />
+                </template>
+            </CheckoutPaymentMethods>
             <p v-if="form.errors.payment_method" class="text-sm font-medium text-red-600">{{ form.errors.payment_method }}</p>
 
             <!-- CajuPay SDK (Cartão / Apple Pay / Google Pay) -->

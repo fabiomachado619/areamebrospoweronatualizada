@@ -43,10 +43,28 @@ class PartnerProductController extends Controller
                 ];
             }
 
+            foreach (ProductOffer::where('product_id', $produto->id)->whereNull('checkout_slug')->orderBy('name')->get() as $offer) {
+                $publicId = $offer->ensurePublicId();
+                $query = $publicId ? 'offer='.$publicId : 'offer_id='.$offer->id;
+                $links[] = [
+                    'label' => 'Oferta: '.$offer->name,
+                    'url' => url('/c/'.$produto->checkout_slug.'?'.$query.'&ref='.$ref),
+                ];
+            }
+
             foreach (SubscriptionPlan::where('product_id', $produto->id)->whereNotNull('checkout_slug')->orderBy('name')->get() as $plan) {
                 $links[] = [
                     'label' => 'Plano: '.$plan->name,
                     'url' => url('/c/'.$plan->checkout_slug.'?ref='.$ref),
+                ];
+            }
+
+            foreach (SubscriptionPlan::where('product_id', $produto->id)->whereNull('checkout_slug')->orderBy('name')->get() as $plan) {
+                $publicId = $plan->ensurePublicId();
+                $query = $publicId ? 'plan='.$publicId : 'plan_id='.$plan->id;
+                $links[] = [
+                    'label' => 'Plano: '.$plan->name,
+                    'url' => url('/c/'.$produto->checkout_slug.'?'.$query.'&ref='.$ref),
                 ];
             }
         }

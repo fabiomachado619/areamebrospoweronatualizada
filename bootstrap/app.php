@@ -8,6 +8,10 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Session\TokenMismatchException;
 use Illuminate\Support\Facades\Artisan;
+use App\Exceptions\ExistingPixCheckoutRedirect;
+use App\Support\PendingPixCheckoutResolver;
+use Illuminate\Http\Exceptions\ThrottleRequestsException;
+use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -53,6 +57,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'member.area.signed' => \App\Http\Middleware\SignedOrMemberAreaRedirect::class,
             'admin.tenant' => \App\Http\Middleware\EnsureAdminHasTenant::class,
             'checkout.abuse' => \App\Http\Middleware\PreventCheckoutAbuse::class,
+            'checkout.reuse-pix' => \App\Http\Middleware\ReusePendingPixCheckout::class,
             'partner.product' => \App\Http\Middleware\EnsurePartnerProductAccess::class,
             'partner.panel' => \App\Http\Middleware\EnsurePartnerPanel::class,
         ]);
@@ -61,6 +66,38 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(function (TokenMismatchException $e, Request $request) {
             if ($request->header('X-Inertia')) {
                 return redirect()->to('/login')->with('error', 'Sessão expirada. Tente fazer login novamente.');
+            }
+
+            return null;
+        });
+
+        $exceptions->render(function (ExistingPixCheckoutRedirect $e, Request $request) {
+            return PendingPixCheckoutResolver::redirectToPixPage($e->order, $e->request);
+        });
+
+        $exceptions->render(function (ThrottleRequestsException|TooManyRequestsHttpException $e, Request $request) {
+            $path = trim($request->path(), '/');
+            $isCheckout = str_starts_with($path, 'checkout')
+                || str_starts_with($path, 'api-checkout')
+                || $path === 'renovar';
+            if (! $isCheckout) {
+                return null;
+            }
+
+            $retryAfter = $e->getHeaders()['Retry-After'] ?? null;
+            $message = $e->getMessage() !== '' && $e->getMessage() !== 'Too Many Attempts.'
+                ? $e->getMessage()
+                : 'Aguarde um momento antes de tentar novamente.';
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => $message,
+                    'retry_after' => is_numeric($retryAfter) ? (int) $retryAfter : null,
+                ], 429);
+            }
+
+            if ($request->header('X-Inertia')) {
+                return back()->with('error', $message);
             }
 
             return null;

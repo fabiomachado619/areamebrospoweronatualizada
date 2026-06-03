@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { Sparkles } from 'lucide-vue-next';
+import { retryImageOnError } from '@/lib/imageLoadRetry';
 
 const props = defineProps({
     config: { type: Object, default: () => ({}) },
@@ -91,6 +92,7 @@ onUnmounted(stopInterval);
                     :src="productImageUrl"
                     :alt="productName || 'Produto'"
                     class="h-full w-full object-cover"
+                    @error="retryImageOnError"
                 />
                 <span
                     v-else

@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Exceptions\ExistingPixCheckoutRedirect;
 use App\Models\Order;
 use App\Models\Product;
+use App\Support\PendingPixCheckoutResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter;
@@ -147,10 +149,12 @@ class CheckoutAbuseGuard
 
     public function assertPendingLimits(Request $request, ?Product $product = null): void
     {
+        $this->tryRedirectToExistingPix($request);
+
         $lookbackHours = max(1, (int) config('checkout_security.pending.lookback_hours', 1));
         $since = now()->subHours($lookbackHours);
 
-        $maxIp = max(1, (int) config('checkout_security.pending.max_per_ip_hour', 5));
+        $maxIp = max(1, (int) config('checkout_security.pending.max_per_ip_hour', 10));
         $ip = $request->ip();
         if ($ip) {
             $ipCount = Order::query()
@@ -159,12 +163,13 @@ class CheckoutAbuseGuard
                 ->where('created_at', '>=', $since)
                 ->count();
             if ($ipCount >= $maxIp) {
+                $this->tryRedirectToExistingPix($request);
                 $this->markCaptchaRequired($request);
                 throw new TooManyRequestsHttpException(300, 'Muitas tentativas de pagamento. Aguarde alguns minutos.');
             }
         }
 
-        $maxEmail = max(1, (int) config('checkout_security.pending.max_per_email_hour', 3));
+        $maxEmail = max(1, (int) config('checkout_security.pending.max_per_email_hour', 6));
         $email = $this->normalizeEmail($request->input('email'));
         if ($email !== '') {
             $emailCount = Order::query()
@@ -173,9 +178,18 @@ class CheckoutAbuseGuard
                 ->where('created_at', '>=', $since)
                 ->count();
             if ($emailCount >= $maxEmail) {
+                $this->tryRedirectToExistingPix($request);
                 $this->markCaptchaRequired($request);
                 throw new TooManyRequestsHttpException(300, 'Muitas tentativas de pagamento para este e-mail. Aguarde alguns minutos.');
             }
+        }
+    }
+
+    private function tryRedirectToExistingPix(Request $request): void
+    {
+        $order = PendingPixCheckoutResolver::findReusable($request);
+        if ($order) {
+            throw new ExistingPixCheckoutRedirect($order, $request);
         }
     }
 

@@ -509,6 +509,7 @@ class UpdateController extends Controller
             $output = (string) \Illuminate\Support\Facades\Artisan::output();
 
             try {
+                \Illuminate\Support\Facades\Artisan::call('config:clear');
                 \Illuminate\Support\Facades\Artisan::call('config:cache');
             } catch (\Throwable) {
             }
@@ -705,6 +706,7 @@ class UpdateController extends Controller
 
         // 5. Config cache
         try {
+            \Illuminate\Support\Facades\Artisan::call('config:clear');
             \Illuminate\Support\Facades\Artisan::call('config:cache');
         } catch (\Throwable $e) {
             // Non-fatal

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\PanelPushSubscription;
 use App\Services\MemberAreaResolver;
+use App\Support\PanelPushPreferences;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -112,6 +113,10 @@ class PanelPwaController extends Controller
             'keys.auth' => ['required', 'string'],
             'keys.p256dh' => ['required', 'string'],
             'renewed' => ['sometimes', 'boolean'],
+            'preferences' => ['sometimes', 'array'],
+            'preferences.pix' => ['sometimes', 'boolean'],
+            'preferences.boleto' => ['sometimes', 'boolean'],
+            'preferences.card' => ['sometimes', 'boolean'],
         ]);
 
         $user = $request->user();
@@ -123,6 +128,11 @@ class PanelPwaController extends Controller
         $keys['auth'] = $this->normalizeBase64KeyForPush((string) ($keys['auth'] ?? ''));
         $keys['p256dh'] = $this->normalizeBase64KeyForPush((string) ($keys['p256dh'] ?? ''));
 
+        $existing = PanelPushSubscription::where('endpoint', $validated['endpoint'])->first();
+        $preferences = PanelPushPreferences::normalize(
+            $validated['preferences'] ?? $existing?->preferences
+        );
+
         $subscription = PanelPushSubscription::updateOrCreate(
             [
                 'endpoint' => $validated['endpoint'],
@@ -132,6 +142,7 @@ class PanelPwaController extends Controller
                 'tenant_id' => $user->tenant_id,
                 'keys' => $keys,
                 'user_agent' => $request->userAgent(),
+                'preferences' => $preferences,
                 'push_fail_count' => 0,
                 'last_push_failed_at' => null,
             ]
@@ -142,7 +153,34 @@ class PanelPwaController extends Controller
             'subscribed' => true,
             'subscription_id' => $subscription->id,
             'renewed' => (bool) ($validated['renewed'] ?? false),
+            'preferences' => PanelPushPreferences::normalize($subscription->preferences),
             'updated_at' => $subscription->updated_at?->toISOString(),
+        ]);
+    }
+
+    public function updatePushPreferences(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'preferences' => ['required', 'array'],
+            'preferences.pix' => ['sometimes', 'boolean'],
+            'preferences.boleto' => ['sometimes', 'boolean'],
+            'preferences.card' => ['sometimes', 'boolean'],
+        ]);
+
+        $user = $request->user();
+        if (! $user->canAccessPanel()) {
+            return response()->json(['message' => 'Acesso negado.'], 403);
+        }
+
+        $preferences = PanelPushPreferences::normalize($validated['preferences']);
+
+        PanelPushSubscription::where('user_id', $user->id)
+            ->where('tenant_id', $user->tenant_id)
+            ->update(['preferences' => $preferences]);
+
+        return response()->json([
+            'success' => true,
+            'preferences' => $preferences,
         ]);
     }
 

@@ -1,11 +1,13 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, router, usePage } from '@inertiajs/vue3';
+import axios from 'axios';
 import { AlertCircle, CheckCircle2 } from 'lucide-vue-next';
 import { useCheckoutLocale } from '@/composables/useCheckoutLocale';
 import { useCheckoutCustomCode } from '@/composables/useCheckoutCustomCode';
 import CheckoutTimer from '@/components/checkout/CheckoutTimer.vue';
 import CheckoutBanners from '@/components/checkout/CheckoutBanners.vue';
+import CheckoutSalesPage from '@/components/checkout/CheckoutSalesPage.vue';
 import CheckoutYoutube from '@/components/checkout/CheckoutYoutube.vue';
 import CheckoutSummary from '@/components/checkout/CheckoutSummary.vue';
 import CheckoutForm from '@/components/checkout/CheckoutForm.vue';
@@ -15,11 +17,24 @@ import SupportButton from '@/components/checkout/SupportButton.vue';
 import ExitPopup from '@/components/checkout/ExitPopup.vue';
 import ConversionPixels from '@/components/checkout/ConversionPixels.vue';
 import { firePurchaseWhenReady } from '@/composables/useConversionPurchase';
+import {
+    normalizeContentBlocks,
+    normalizeContentBlocksForPreview,
+    dedupeContentBlocks,
+} from '@/lib/checkoutContentFormats';
+import {
+    PREVIEW_MESSAGE_TYPE,
+    PREVIEW_ACK_TYPE,
+    PREVIEW_WINDOW_CALLBACK,
+    isCheckoutBuilderPreviewUrl,
+    subscribePreviewBroadcast,
+} from '@/lib/checkoutBuilderPreview';
 
 defineOptions({ layout: null });
 
 const page = usePage();
-const PREVIEW_MESSAGE_TYPE = 'checkout-builder-preview-config';
+
+const previewViewport = ref('desktop');
 
 const props = defineProps({
     product: { type: Object, required: true },
@@ -61,12 +76,79 @@ const props = defineProps({
 });
 
 const previewConfig = ref(null);
+const previewConfigSeq = ref(0);
+let lastAppliedPreviewSeq = 0;
+
+const isPreviewIframe = computed(
+    () => props.checkout_builder_preview || isCheckoutBuilderPreviewUrl()
+);
+
+function applyPreviewPayload(data) {
+    if (!data?.config) {
+        return;
+    }
+    const seq = Number(data.seq) || 0;
+    if (seq > 0 && seq <= lastAppliedPreviewSeq) {
+        return;
+    }
+    if (seq > 0) {
+        lastAppliedPreviewSeq = seq;
+    }
+    previewConfig.value = structuredClone(data.config);
+    previewConfigSeq.value = seq || previewConfigSeq.value + 1;
+    if (data.previewViewport === 'mobile' || data.previewViewport === 'desktop') {
+        previewViewport.value = data.previewViewport;
+    }
+}
 
 function onPreviewMessage(event) {
-    if (!props.checkout_builder_preview) return;
-    if (event.origin !== window.location.origin) return;
-    if (event?.data?.type !== PREVIEW_MESSAGE_TYPE || event.data.config == null) return;
-    previewConfig.value = event.data.config;
+    if (!isPreviewIframe.value) {
+        return;
+    }
+    if (event.source !== window.parent) {
+        return;
+    }
+    if (event?.data?.type !== PREVIEW_MESSAGE_TYPE) {
+        return;
+    }
+    handlePreviewPayload(event.data);
+}
+
+/** Registrado no onMounted do iframe (garante DOM + ?preview=1). */
+let previewBridgeRegistered = false;
+/** @type {(() => void)|null} */
+let unsubscribePreviewBroadcast = null;
+
+function ackPreviewToParent() {
+    try {
+        window.parent?.postMessage({ type: PREVIEW_ACK_TYPE, at: Date.now() }, '*');
+    } catch (_) {}
+}
+
+function handlePreviewPayload(payload) {
+    applyPreviewPayload(payload);
+    ackPreviewToParent();
+}
+
+function registerPreviewBridge() {
+    if (typeof window === 'undefined' || !isPreviewIframe.value || previewBridgeRegistered) {
+        return;
+    }
+    previewBridgeRegistered = true;
+    window[PREVIEW_WINDOW_CALLBACK] = handlePreviewPayload;
+    window.addEventListener('message', onPreviewMessage);
+    unsubscribePreviewBroadcast = subscribePreviewBroadcast(handlePreviewPayload);
+}
+
+function unregisterPreviewBridge() {
+    if (typeof window === 'undefined') {
+        return;
+    }
+    previewBridgeRegistered = false;
+    delete window[PREVIEW_WINDOW_CALLBACK];
+    window.removeEventListener('message', onPreviewMessage);
+    unsubscribePreviewBroadcast?.();
+    unsubscribePreviewBroadcast = null;
 }
 
 /** Config ao vivo do Builder (postMessage); antes da primeira mensagem usa o config do servidor. */
@@ -77,17 +159,14 @@ const effectiveConfig = computed(() => {
     return props.config;
 });
 
-/** Listener no setup (não só no onMounted) para não perder postMessage se o parent disparar no @load do iframe antes do mount. */
-if (typeof window !== 'undefined' && props.checkout_builder_preview) {
-    window.addEventListener('message', onPreviewMessage);
-}
 onUnmounted(() => {
     if (initiateCheckoutDebounceTimer) {
         clearTimeout(initiateCheckoutDebounceTimer);
         initiateCheckoutDebounceTimer = null;
     }
-    if (typeof window !== 'undefined' && props.checkout_builder_preview) {
-        window.removeEventListener('message', onPreviewMessage);
+    unregisterPreviewBridge();
+    if (isPreviewIframe.value && typeof document !== 'undefined') {
+        document.documentElement.classList.remove('checkout-builder-preview-mode');
     }
 });
 
@@ -95,6 +174,19 @@ const appliedCoupon = ref(null);
 
 const storageKey = computed(() => props.product?.checkout_slug || 'default');
 const checkoutForceConfig = computed(() => props.product?.checkout_config?.checkout_force ?? null);
+const checkoutCurrencyConfig = computed(() => {
+    const cc = props.product?.checkout_config?.checkout_currency;
+    if (cc?.mode === 'fixed' || cc?.mode === 'global') {
+        return cc;
+    }
+    const force = props.product?.checkout_config?.checkout_force;
+    if (force?.enabled && force?.currency) {
+        return { mode: 'fixed', currency: force.currency };
+    }
+
+    return { mode: 'global', currency: 'BRL' };
+});
+const isCheckoutCurrencyFixed = computed(() => checkoutCurrencyConfig.value?.mode === 'fixed');
 const customDisplayPricesByCurrency = computed(() => props.product?.custom_display_prices_by_currency ?? {});
 const skipCustomDisplayPrices = computed(() => appliedCoupon.value != null);
 
@@ -117,6 +209,7 @@ const {
     suggestedCurrency: props.suggested_currency,
     storageKey: props.product?.checkout_slug || 'default',
     checkoutForce: checkoutForceConfig,
+    checkoutCurrency: checkoutCurrencyConfig,
     customDisplayPricesByCurrency,
     skipCustomDisplayPrices,
 });
@@ -125,8 +218,70 @@ const localeLabels = { pt_BR: 'PT', en: 'EN', es: 'ES' };
 const appearance = computed(() => effectiveConfig.value?.appearance ?? {});
 const backgroundColor = computed(() => appearance.value.background_color || '#E3E3E3');
 const primaryColor = computed(() => appearance.value.primary_color || '#0ea5e9');
-const banners = computed(() => appearance.value.banners ?? []);
-const sideBannersFiltered = computed(() => (appearance.value.side_banners ?? []).filter(Boolean));
+
+function buildLegacyContentBlocks(appearanceValue) {
+    const blocks = [];
+    for (const url of (appearanceValue.banners ?? []).filter(Boolean)) {
+        blocks.push({
+            id: `legacy-hero-${blocks.length}`,
+            type: 'image',
+            url,
+            format: 'hero',
+            placement: 'main',
+            link: '',
+            alt: '',
+        });
+    }
+    for (const url of (appearanceValue.side_banners ?? []).filter(Boolean)) {
+        blocks.push({
+            id: `legacy-side-${blocks.length}`,
+            type: 'image',
+            url,
+            format: 'portrait',
+            placement: 'sidebar',
+            link: '',
+            alt: '',
+        });
+    }
+    return blocks;
+}
+
+const contentBlocks = computed(() => {
+    const appearanceValue = appearance.value;
+    const raw = appearanceValue.content_blocks;
+    if (Array.isArray(raw)) {
+        const normalize = isPreviewIframe.value
+            ? normalizeContentBlocksForPreview
+            : normalizeContentBlocks;
+
+        return dedupeContentBlocks(normalize(raw));
+    }
+
+    return buildLegacyContentBlocks(appearanceValue);
+});
+
+const hasHeroBlocks = computed(() =>
+    contentBlocks.value.some((b) => b.type === 'image' && b.format === 'hero' && b.placement !== 'sidebar')
+);
+const hasSalesPageBlocks = computed(() =>
+    contentBlocks.value.some(
+        (block) =>
+            block.type === 'text'
+            || (block.type === 'image' && block.placement === 'main' && block.format !== 'hero')
+    )
+);
+const hasSidebarBlocks = computed(() =>
+    contentBlocks.value.some((b) => b.type === 'image' && b.placement === 'sidebar')
+);
+
+const previewRootClass = computed(() => {
+    if (!isPreviewIframe.value) {
+        return '';
+    }
+    return previewViewport.value === 'mobile'
+        ? 'checkout-preview--mobile'
+        : 'checkout-preview--desktop';
+});
 const timerConfig = computed(() => effectiveConfig.value?.timer ?? {});
 const salesNotificationConfig = computed(() => effectiveConfig.value?.sales_notification ?? {});
 
@@ -151,21 +306,40 @@ function onUserSetCurrency(v) {
     setCurrency(v);
 }
 
+function applyCurrencyFromGeo(code) {
+    const available = currencyList.value.map((c) => String(c.code).toUpperCase());
+    const target = String(code || '').toUpperCase();
+    if (available.includes(target)) {
+        setCurrency(target);
+    }
+}
+
 function applyGeoLocaleFromServer() {
-    if (typeof window === 'undefined' || props.checkout_builder_preview) {
+    if (typeof window === 'undefined' || isPreviewIframe.value) {
         return;
     }
     try {
         const slug = storageKey.value;
         const manualKey = `checkout_locale_manual_${slug}`;
         const geoKey = `checkout_last_geo_country_${slug}`;
+        const force = props.product?.checkout_config?.checkout_force;
+
+        if (isCheckoutCurrencyFixed.value) {
+            applyCurrencyFromGeo(checkoutCurrencyConfig.value.currency);
+        }
+
         if (localStorage.getItem(manualKey)) {
             return;
         }
-        const force = props.product?.checkout_config?.checkout_force;
+
         if (force?.enabled) {
+            if (force.locale) {
+                setLocale(force.locale);
+            }
+
             return;
         }
+
         const normalized = props.suggested_country_code
             ? String(props.suggested_country_code).toUpperCase().trim()
             : CHECKOUT_GEO_UNKNOWN;
@@ -173,7 +347,9 @@ function applyGeoLocaleFromServer() {
         const isBrazil = normalized === 'BR';
         if (isBrazil) {
             setLocale(props.suggested_locale || 'pt_BR');
-            setCurrency('BRL');
+            if (!isCheckoutCurrencyFixed.value) {
+                applyCurrencyFromGeo('BRL');
+            }
             if (last !== normalized) {
                 localStorage.setItem(geoKey, normalized);
             }
@@ -183,14 +359,43 @@ function applyGeoLocaleFromServer() {
             return;
         }
         setLocale(props.suggested_locale);
-        setCurrency(props.suggested_currency);
+        if (!isCheckoutCurrencyFixed.value) {
+            applyCurrencyFromGeo(props.suggested_currency);
+        }
         localStorage.setItem(geoKey, normalized);
     } catch (_) {}
 }
 
+function persistSessionCountryFromClient() {
+    const token = String(props.checkout_session_token || '').trim();
+    if (!token) return;
+    const code = String(props.suggested_country_code || 'BR').toUpperCase().trim().slice(0, 2);
+    if (code.length !== 2) return;
+    axios.post('/api/checkout/track-country', {
+        session_token: token,
+        country_code: code,
+    }).catch(() => {});
+}
+
 onMounted(() => {
+    registerPreviewBridge();
+    if (isPreviewIframe.value && typeof document !== 'undefined') {
+        document.documentElement.classList.add('checkout-builder-preview-mode');
+    }
     applyGeoLocaleFromServer();
+    persistSessionCountryFromClient();
 });
+
+if (typeof window !== 'undefined' && (props.checkout_builder_preview || isCheckoutBuilderPreviewUrl())) {
+    registerPreviewBridge();
+}
+
+watch(
+    () => [props.suggested_country_code, props.suggested_currency],
+    () => {
+        applyGeoLocaleFromServer();
+    }
+);
 
 const seo = computed(() => effectiveConfig.value?.seo ?? {});
 /** Título da aba do navegador e para compartilhamento (Open Graph). Vem do "Título para compartilhamento" no Builder. */
@@ -434,6 +639,7 @@ const hasCustomBodyEnd = computed(() => String(customBodyEndHtml.value).trim() !
         id="getfy-checkout-root"
         data-checkout="page"
         class="min-h-screen transition-colors duration-300"
+        :class="previewRootClass"
         :style="{ backgroundColor }"
     >
         <CheckoutTimer :config="timerConfig" :storage-key="storageKey" :t="t" />
@@ -481,10 +687,23 @@ const hasCustomBodyEnd = computed(() => String(customBodyEndHtml.value).trim() !
                 {{ flash.info }}
             </div>
 
-            <CheckoutBanners v-if="banners.length" :urls="banners" />
+            <CheckoutBanners
+                v-if="hasHeroBlocks"
+                :key="`preview-hero-${previewConfigSeq}`"
+                :blocks="contentBlocks"
+                placement="top"
+            />
+            <CheckoutSalesPage
+                v-if="hasSalesPageBlocks"
+                :key="`preview-sales-${previewConfigSeq}`"
+                :blocks="contentBlocks"
+                placement="main"
+                exclude-hero
+                class="mb-6"
+            />
             <CheckoutYoutube v-if="(effectiveConfig?.youtube_position ?? 'top') !== 'bottom'" :url="effectiveConfig?.youtube_url" />
 
-            <div class="flex flex-col gap-8 lg:flex-row lg:gap-10" data-checkout="layout-columns">
+            <div class="checkout-layout-columns flex flex-col gap-8 lg:flex-row lg:gap-10" data-checkout="layout-columns">
                 <!-- Coluna principal -->
                 <div class="w-full lg:w-2/3" data-checkout="column-primary">
                     <div
@@ -503,12 +722,8 @@ const hasCustomBodyEnd = computed(() => String(customBodyEndHtml.value).trim() !
                             :format-price="formatPrice"
                             :locale="locale"
                             :supported-locales="supportedLocales"
-                            :currency-list="currencyList"
-                            :featured-currencies="featuredCurrencies"
-                            :other-currencies="otherCurrencies"
                             :locale-labels="localeLabels"
                             @set-locale="onUserSetLocale"
-                            @set-currency="onUserSetCurrency"
                         />
                         <hr class="my-8 border-0 border-t border-gray-100" data-checkout="divider-summary-form" />
                         <CheckoutForm
@@ -543,9 +758,14 @@ const hasCustomBodyEnd = computed(() => String(customBodyEndHtml.value).trim() !
                             :checkout-total-in-currency="checkoutTotalInCurrency"
                             :main-line-price-brl="mainLinePriceBrl"
                             :checkout-security="checkout_security"
+                            :currency-list="currencyList"
+                            :featured-currencies="featuredCurrencies"
+                            :other-currencies="otherCurrencies"
+                            :price-in-currency="priceInCurrency"
                             @coupon-applied="onCouponApplied"
                             @coupon-cleared="onCouponCleared"
                             @payment-approved="onPaymentApproved"
+                            @set-currency="onUserSetCurrency"
                         />
                     </div>
                 </div>
@@ -566,19 +786,8 @@ const hasCustomBodyEnd = computed(() => String(customBodyEndHtml.value).trim() !
             </div>
 
             <!-- Banners laterais: no mobile aparecem no final da página -->
-            <div
-                v-if="sideBannersFiltered.length"
-                class="mt-8 space-y-4 lg:hidden"
-                data-checkout="banners-side-mobile"
-            >
-                <img
-                    v-for="(url, i) in sideBannersFiltered"
-                    :key="i"
-                    :src="url"
-                    alt="Banner"
-                    class="w-full rounded-2xl object-cover shadow-lg"
-                    @error="(e) => e?.target && (e.target.style.display = 'none')"
-                />
+            <div v-if="hasSidebarBlocks" class="checkout-sidebar-mobile mt-8 lg:hidden" data-checkout="banners-side-mobile">
+                <CheckoutSalesPage :blocks="contentBlocks" placement="sidebar" />
             </div>
 
             <!-- Vídeo YouTube em baixo da página (quando a posição for "bottom") -->
@@ -609,3 +818,53 @@ const hasCustomBodyEnd = computed(() => String(customBodyEndHtml.value).trim() !
         />
     </div>
 </template>
+
+<style scoped>
+.checkout-preview--mobile .checkout-layout-columns {
+    flex-direction: column !important;
+}
+
+.checkout-preview--mobile .checkout-sidebar-desktop {
+    display: none !important;
+}
+
+.checkout-preview--mobile .checkout-sidebar-mobile {
+    display: block !important;
+}
+
+.checkout-preview--desktop .checkout-layout-columns {
+    flex-direction: row !important;
+}
+
+.checkout-preview--desktop [data-checkout="column-primary"] {
+    width: 66.666667% !important;
+}
+
+.checkout-preview--desktop [data-checkout="sidebar"] {
+    display: block !important;
+    width: 33.333333% !important;
+}
+
+.checkout-preview--desktop .checkout-sidebar-desktop {
+    display: block !important;
+}
+
+.checkout-preview--desktop .checkout-sidebar-mobile {
+    display: none !important;
+}
+
+.checkout-preview--desktop [data-checkout="layout-inner"],
+.checkout-preview--mobile [data-checkout="layout-inner"] {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+}
+</style>
+
+<style>
+html.checkout-builder-preview-mode,
+html.checkout-builder-preview-mode body {
+    height: auto;
+    min-height: 100%;
+    overflow: auto;
+}
+</style>

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue';
 import { X } from 'lucide-vue-next';
+import { retryImageOnError } from '@/lib/imageLoadRetry';
 
 const emit = defineEmits(['accept']);
 
@@ -143,7 +144,7 @@ const imageUrl = computed(() => cfg.value?.image || null);
                     :src="imageUrl"
                     alt=""
                     class="mb-4 w-full rounded-xl object-cover"
-                    @error="(e) => e?.target && (e.target.style.display = 'none')"
+                    @error="retryImageOnError"
                 />
                 <h2 id="exit-popup-title" class="pr-8 text-lg font-bold text-gray-900">
                     {{ title }}

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import { ShoppingBag, Check } from 'lucide-vue-next';
+import { retryImageOnError } from '@/lib/imageLoadRetry';
 
 const props = defineProps({
     orderBumps: { type: Array, default: () => [] },
@@ -128,6 +129,7 @@ defineExpose({
                                 :src="bump.image_url"
                                 :alt="bump.target_name"
                                 class="h-full w-full object-cover"
+                                @error="retryImageOnError"
                             />
                             <div v-else class="flex h-full w-full items-center justify-center text-gray-400">
                                 <ShoppingBag class="h-8 w-8" />

@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Support\CheckoutPublicId;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class SubscriptionPlan extends Model
@@ -17,6 +19,7 @@ class SubscriptionPlan extends Model
 
     protected $fillable = [
         'product_id',
+        'public_id',
         'name',
         'price',
         'currency',
@@ -35,6 +38,15 @@ class SubscriptionPlan extends Model
             'checkout_config' => 'array',
             'combo_product_ids' => 'array',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::creating(function (SubscriptionPlan $plan) {
+            if (empty($plan->public_id)) {
+                $plan->public_id = CheckoutPublicId::generateUnique();
+            }
+        });
     }
 
     /**
@@ -104,6 +116,23 @@ class SubscriptionPlan extends Model
             self::INTERVAL_ANNUAL => $start->copy()->addYear(),
             default => $start->copy()->addMonth(),
         };
+
         return [$start, $end];
+    }
+
+    public function ensurePublicId(): ?string
+    {
+        if (! Schema::hasColumn($this->getTable(), 'public_id')) {
+            return $this->public_id;
+        }
+
+        if (! empty($this->public_id)) {
+            return $this->public_id;
+        }
+
+        $this->public_id = CheckoutPublicId::generateUnique();
+        $this->saveQuietly();
+
+        return $this->public_id;
     }
 }

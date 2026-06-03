@@ -43,6 +43,7 @@ const isFirstOfThree = (index) => count.value === 3 && index === 0;
             </span>
             <h2 class="text-lg font-semibold tracking-tight text-gray-900">{{ t('checkout.forma_pagamento') }}</h2>
         </div>
+        <slot name="after-header" />
         <div class="grid gap-3" :class="gridClass" data-checkout="payment-methods-grid">
             <button
                 v-for="(method, index) in availablePaymentMethods"
