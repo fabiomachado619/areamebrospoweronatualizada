@@ -113,7 +113,7 @@ return [
 
     'from' => [
         'address' => env('MAIL_FROM_ADDRESS', 'noreply@getfy.com'),
-        'name' => env('MAIL_FROM_NAME', 'Getfy'),
+        'name' => env('MAIL_FROM_NAME', 'Power On'),
     ],
 
 ];

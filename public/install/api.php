@@ -93,7 +93,7 @@ if ($action === 'install-step') {
     $dbDatabase = $input['db_database'] ?? '';
     $dbUser = $input['db_username'] ?? '';
     $dbPass = $input['db_password'] ?? '';
-    $appName = $input['app_name'] ?? 'Getfy';
+    $appName = $input['app_name'] ?? 'Power On';
     $appUrl = rtrim($input['app_url'] ?? '', '/');
     $appEnv = $input['app_env'] ?? 'production';
     $sessionDriver = $input['session_driver'] ?? 'file';

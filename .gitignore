@@ -1,8 +1,68 @@
 *.log
 .DS_Store
+Thumbs.db
+
+# Ambiente e segredos (NUNCA versionar)
 .env
+.env.*
+!.env.example
 .env.backup
 .env.production
+/auth.json
+*.pem
+*.key
+credentials/
+secrets/
+
+# Dependências (instalar na VPS com composer/npm)
+/vendor/
+/node_modules/
+
+# Build frontend (gerar na VPS com npm run build)
+/public/build/
+/public/hot
+/public/storage
+/public/.install
+
+# Cache e runtime Laravel
+/bootstrap/cache/*
+!/bootstrap/cache/.gitignore
+/storage/framework/cache/*
+!/storage/framework/cache/.gitignore
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+/storage/logs/*
+!/storage/logs/.gitignore
+/storage/*.key
+/storage/pail
+/storage/app/install.lock
+
+# Uploads e dados locais (permanecem só na VPS)
+/storage/app/*
+!/storage/app/.gitignore
+!/storage/app/public/
+/storage/app/public/*
+!/storage/app/public/.gitignore
+/storage/app/plugins-installed
+/plugins-installed
+.docker/plugins-installed
+
+# Backups, dumps e arquivos temporários
+/backups/
+/storage/backups/
+*.sql
+*.sql.gz
+*.zip
+*.tar
+*.tar.gz
+*.bak
+*.tmp
+*.swp
+*~
+
+# IDE e ferramentas locais
 .phpactor.json
 .phpunit.result.cache
 /.fleet
@@ -11,26 +71,15 @@
 /.phpunit.cache
 /.vscode
 /.zed
-/auth.json
-/node_modules
-# Plugins instalados pelo painel / ZIP (persistente; não versionar)
-/plugins-installed
-/storage/app/plugins-installed
-.docker/plugins-installed
-/public/hot
-/public/storage
-/public/.install
-/storage/app/install.lock
-/storage/*.key
-/storage/pail
 Homestead.json
 Homestead.yaml
-Thumbs.db
-/docs
-/Docs Gateways
-docs
-Docs Gateways
+
+# Plugins instalados pelo painel (persistente; não versionar)
 /plugins/*
 !/plugins/getfy-plugin-starter/
 !/plugins/getfy-vitrine-demo/
 !/plugins/mercado-envios-stub/
+
+# Documentação interna legada (não confundir com docs/ de deploy)
+/Docs Gateways
+Docs Gateways

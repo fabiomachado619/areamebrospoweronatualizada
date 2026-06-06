@@ -18,22 +18,50 @@ class AlunosController extends Controller
 {
     private const FILTER_OPTIONS = ['todos', 'novos_30'];
 
-    private function tenantProductIds(?int $tenantId): array
+    private function tenantProductIds(?int $tenantId, bool $memberAreaCoursesOnly = false): array
     {
         if (auth()->user()?->isTeam()) {
-            return app(TeamAccessService::class)->allowedProductIdsFor(auth()->user());
+            $ids = app(TeamAccessService::class)->allowedProductIdsFor(auth()->user());
+            if ($memberAreaCoursesOnly) {
+                return Product::query()
+                    ->whereIn('id', $ids)
+                    ->where('type', Product::TYPE_AREA_MEMBROS)
+                    ->where('is_member_hub', false)
+                    ->pluck('id')
+                    ->all();
+            }
+
+            return $ids;
         }
 
-        return Product::forTenant($tenantId)->pluck('id')->toArray();
+        $query = Product::forTenant($tenantId);
+        if ($memberAreaCoursesOnly) {
+            $query->where('type', Product::TYPE_AREA_MEMBROS)->where('is_member_hub', false);
+        }
+
+        return $query->pluck('id')->all();
     }
 
-    private function baseAlunosQuery(?int $tenantId)
+    private function baseAlunosQuery(?int $tenantId, bool $memberAreaCoursesOnly = false)
     {
+        $tenantProductIds = $this->tenantProductIds($tenantId, $memberAreaCoursesOnly);
+
         return User::where('role', User::ROLE_ALUNO)
-            ->whereHas('products', fn ($q) => $q->forTenant($tenantId));
+            ->whereHas('products', fn ($q) => $q->whereIn('products.id', $tenantProductIds));
     }
 
-    public function index(Request $request): Response
+    /**
+     * @return array<string, mixed>
+     */
+    public function memberAreaIndexProps(Request $request): array
+    {
+        return $this->buildIndexProps($request, true);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildIndexProps(Request $request, bool $memberAreaCoursesOnly = false): array
     {
         $tenantId = auth()->user()->tenant_id;
         $filter = $request->query('filter', 'todos');
@@ -50,21 +78,17 @@ class AlunosController extends Controller
             ? $productIdsFilter
             : (is_string($productIdsFilter) ? array_filter(explode(',', $productIdsFilter)) : []);
 
-        $tenantProductIds = $this->tenantProductIds($tenantId);
-        $baseAlunosQuery = $this->baseAlunosQuery($tenantId);
+        $tenantProductIds = $this->tenantProductIds($tenantId, $memberAreaCoursesOnly);
+        $baseAlunosQuery = $this->baseAlunosQuery($tenantId, $memberAreaCoursesOnly);
 
         if ($filter === 'novos_30') {
-            $baseAlunosQuery->whereExists(function ($q) use ($tenantId) {
+            $baseAlunosQuery->whereExists(function ($q) use ($tenantProductIds) {
                 $q->select(DB::raw(1))
                     ->from('product_user')
                     ->join('products', 'products.id', '=', 'product_user.product_id')
                     ->whereColumn('product_user.user_id', 'users.id')
+                    ->whereIn('products.id', $tenantProductIds)
                     ->where('product_user.created_at', '>=', now()->subDays(30));
-                if ($tenantId === null) {
-                    $q->whereNull('products.tenant_id');
-                } else {
-                    $q->where('products.tenant_id', $tenantId);
-                }
             });
         }
 
@@ -76,73 +100,115 @@ class AlunosController extends Controller
         }
 
         if ($search !== null) {
-            $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $search) . '%';
+            $like = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $search).'%';
             $baseAlunosQuery->where(function ($q) use ($like) {
                 $q->where('users.name', 'like', $like)->orWhere('users.email', 'like', $like);
             });
         }
 
+        $produtosQuery = Product::forTenant($tenantId)->withCount('users')->orderBy('name');
+        if ($memberAreaCoursesOnly) {
+            $produtosQuery->where('type', Product::TYPE_AREA_MEMBROS)->where('is_member_hub', false);
+        }
+
         $alunos = (clone $baseAlunosQuery)
-            ->with(['products' => fn ($q) => $q->forTenant($tenantId)->select('products.id', 'products.name')])
-            ->withCount(['products as products_count' => function ($q) use ($tenantId) {
+            ->with(['products' => fn ($q) => $q->forTenant($tenantId)->select('products.id', 'products.name', 'products.type', 'products.is_member_hub')])
+            ->withCount(['products as products_count' => function ($q) use ($tenantId, $memberAreaCoursesOnly) {
                 if ($tenantId === null) {
                     $q->whereNull('tenant_id');
                 } else {
                     $q->where('tenant_id', $tenantId);
                 }
+                if ($memberAreaCoursesOnly) {
+                    $q->where('type', Product::TYPE_AREA_MEMBROS)->where('is_member_hub', false);
+                }
             }])
             ->orderBy('name')
             ->paginate(20)
             ->withQueryString()
-            ->through(fn (User $u) => [
-                'id' => $u->id,
-                'name' => $u->name,
-                'email' => $u->email,
-                'products_count' => $u->products_count,
-                'products' => $u->products->map(fn ($p) => ['id' => $p->id, 'name' => $p->name]),
-            ]);
-
-        $produtos = Product::forTenant($tenantId)->withCount('users')->orderBy('name')->get();
-
-        $totalAlunos = User::where('role', User::ROLE_ALUNO)
-            ->whereHas('products', fn ($q) => $q->forTenant($tenantId))
-            ->count();
-
-        $totalInscricoes = empty($tenantProductIds)
-            ? 0
-            : DB::table('product_user')->whereIn('product_id', $tenantProductIds)->count();
-
-        $produtosAtivos = Product::forTenant($tenantId)->whereHas('users')->count();
-
-        $alunosNovos30dias = User::where('role', User::ROLE_ALUNO)
-            ->whereExists(function ($q) use ($tenantId) {
-                $q->select(DB::raw(1))
-                    ->from('product_user')
-                    ->join('products', 'products.id', '=', 'product_user.product_id')
-                    ->whereColumn('product_user.user_id', 'users.id')
-                    ->where('product_user.created_at', '>=', now()->subDays(30));
-                if ($tenantId === null) {
-                    $q->whereNull('products.tenant_id');
-                } else {
-                    $q->where('products.tenant_id', $tenantId);
+            ->through(function (User $u) use ($memberAreaCoursesOnly) {
+                $products = $u->products;
+                if ($memberAreaCoursesOnly) {
+                    $products = $products->filter(fn ($p) => $p->type === Product::TYPE_AREA_MEMBROS && ! $p->is_member_hub);
                 }
-            })
-            ->count();
 
-        $stats = [
-            'total_alunos' => $totalAlunos,
-            'total_inscricoes' => $totalInscricoes,
-            'produtos_ativos' => $produtosAtivos,
-            'alunos_novos_30dias' => $alunosNovos30dias,
-        ];
+                return [
+                    'id' => $u->id,
+                    'name' => $u->name,
+                    'email' => $u->email,
+                    'products_count' => $u->products_count,
+                    'products' => $products->map(fn ($p) => ['id' => $p->id, 'name' => $p->name])->values()->all(),
+                ];
+            });
 
-        return Inertia::render('Alunos/Index', [
+        $produtos = $produtosQuery->get();
+        $statsBase = $this->baseAlunosQuery($tenantId, $memberAreaCoursesOnly);
+
+        return [
             'alunos' => $alunos,
             'produtos' => $produtos,
-            'stats' => $stats,
+            'stats' => [
+                'total_alunos' => (clone $statsBase)->count(),
+                'total_inscricoes' => empty($tenantProductIds)
+                    ? 0
+                    : DB::table('product_user')->whereIn('product_id', $tenantProductIds)->count(),
+                'produtos_ativos' => Product::forTenant($tenantId)
+                    ->when($memberAreaCoursesOnly, fn ($q) => $q->where('type', Product::TYPE_AREA_MEMBROS)->where('is_member_hub', false))
+                    ->whereHas('users')
+                    ->count(),
+                'alunos_novos_30dias' => (clone $statsBase)->whereExists(function ($q) use ($tenantProductIds) {
+                    $q->select(DB::raw(1))
+                        ->from('product_user')
+                        ->whereColumn('product_user.user_id', 'users.id')
+                        ->whereIn('product_user.product_id', $tenantProductIds)
+                        ->where('product_user.created_at', '>=', now()->subDays(30));
+                })->count(),
+            ],
             'filter' => $filter,
             'product_ids_filter' => $productIdsFilter,
-            'q' => $search,
+            'q' => $search ?? '',
+        ];
+    }
+
+    public function index(Request $request): Response
+    {
+        return Inertia::render('Alunos/Index', $this->buildIndexProps($request, false));
+    }
+
+    public function resendAccessEmail(User $aluno, AccessEmailService $accessEmailService): JsonResponse
+    {
+        $tenantId = auth()->user()->tenant_id;
+        if ($aluno->role !== User::ROLE_ALUNO) {
+            abort(404);
+        }
+        if (! $aluno->products()->forTenant($tenantId)->exists()) {
+            abort(404);
+        }
+
+        $products = $aluno->products()
+            ->forTenant($tenantId)
+            ->where('type', Product::TYPE_AREA_MEMBROS)
+            ->where('is_member_hub', false)
+            ->get();
+
+        if ($products->isEmpty()) {
+            return response()->json(['success' => false, 'message' => 'Aluno não possui cursos com acesso para reenviar e-mail.'], 422);
+        }
+
+        $sent = 0;
+        foreach ($products as $product) {
+            if ($accessEmailService->sendForUserProduct($aluno, $product)) {
+                $sent++;
+            }
+        }
+
+        if ($sent === 0) {
+            return response()->json(['success' => false, 'message' => 'Não foi possível enviar o e-mail de acesso. Verifique as configurações de e-mail.'], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $sent === 1 ? 'E-mail de acesso reenviado.' : "E-mail de acesso reenviado para {$sent} curso(s).",
         ]);
     }
 
@@ -196,7 +262,7 @@ class AlunosController extends Controller
         if ($sendAccessEmail && ! empty($productIds)) {
             $products = Product::whereIn('id', $productIds)->get();
             foreach ($products as $product) {
-                if ($accessEmailService->sendForUserProduct($user, $product)) {
+                if ($accessEmailService->sendForUserProduct($user, $product, $validated['password'])) {
                     $emailsSent++;
                 }
             }
@@ -385,7 +451,7 @@ class AlunosController extends Controller
                 if ($sendAccessEmail && ! empty($productIds)) {
                     $products = Product::whereIn('id', $productIds)->get();
                     foreach ($products as $product) {
-                        if ($accessEmailService->sendForUserProduct($user, $product)) {
+                        if ($accessEmailService->sendForUserProduct($user, $product, $password)) {
                             $emailsSent++;
                         }
                     }

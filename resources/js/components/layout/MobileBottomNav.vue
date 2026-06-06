@@ -8,7 +8,7 @@ import { isNavItemActive } from '@/lib/nav';
 const page = usePage();
 const { isStandalone } = usePwaInstall('painel');
 const appSettings = () => page.props.appSettings ?? {};
-const logoUrl = () => appSettings().app_logo_icon ?? 'https://cdn.getfy.cloud/collapsed-logo.png';
+const logoUrl = () => appSettings().app_logo_icon ?? '/brand/logo-icon.png';
 
 const navItems = [
     { name: 'Home', href: '/dashboard', icon: LayoutDashboard },

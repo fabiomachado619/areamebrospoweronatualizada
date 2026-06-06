@@ -21,4 +21,9 @@ return [
         'vapid_public' => env('PWA_VAPID_PUBLIC', ''),
         'vapid_private' => env('PWA_VAPID_PRIVATE', ''),
     ],
+
+    'my_courses' => [
+        'title' => env('MEMBER_HUB_MY_COURSES_TITLE', 'Meus Cursos'),
+        'cover_mode' => env('MEMBER_HUB_MY_COURSES_COVER_MODE', 'vertical'),
+    ],
 ];

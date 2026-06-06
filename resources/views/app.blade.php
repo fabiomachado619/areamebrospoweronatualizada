@@ -14,12 +14,12 @@
     </script>
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @if(!empty($openGraph) && is_array($openGraph))
-        <title>{{ e($openGraph['title'] ?? config('getfy.app_name', config('app.name', 'Getfy'))) }}</title>
+        <title>{{ e($openGraph['title'] ?? config('getfy.app_name', config('app.name', 'Power On'))) }}</title>
         @if(!empty($openGraph['description']))
             <meta name="description" content="{{ e($openGraph['description']) }}">
         @endif
         <meta property="og:type" content="{{ e($openGraph['type'] ?? 'website') }}">
-        <meta property="og:site_name" content="{{ e($openGraph['site_name'] ?? config('getfy.app_name', config('app.name', 'Getfy'))) }}">
+        <meta property="og:site_name" content="{{ e($openGraph['site_name'] ?? config('getfy.app_name', config('app.name', 'Power On'))) }}">
         <meta property="og:title" content="{{ e($openGraph['title'] ?? '') }}">
         @if(!empty($openGraph['description']))
             <meta property="og:description" content="{{ e($openGraph['description']) }}">
@@ -43,7 +43,7 @@
             <meta name="twitter:image" content="{{ e($openGraph['image']) }}">
         @endif
     @else
-        <title>{{ config('getfy.app_name', config('app.name', 'Getfy')) }}</title>
+        <title>{{ config('getfy.app_name', config('app.name', 'Power On')) }}</title>
     @endif
     @unless($skipPanelPwa)
     @php
@@ -56,7 +56,11 @@
             : null;
     @endphp
     <link rel="icon" href="{{ $wlFavicon }}" type="image/png" sizes="32x32">
-    <link rel="shortcut icon" href="{{ $wlFavicon }}" type="image/png">
+    <link rel="icon" href="{{ url('/brand/favicon-16x16.png') }}" type="image/png" sizes="16x16">
+    <link rel="shortcut icon" href="{{ url('/brand/favicon.ico') }}" type="image/x-icon">
+    <link rel="apple-touch-icon" href="{{ url('/brand/apple-touch-icon.png') }}" sizes="180x180">
+    <link rel="icon" href="{{ url('/icons/android-chrome-192x192.png') }}" type="image/png" sizes="192x192">
+    <link rel="icon" href="{{ url('/icons/android-chrome-512x512.png') }}" type="image/png" sizes="512x512">
     <link rel="manifest" href="{{ url('/manifest.json') }}">
     <meta name="theme-color" content="{{ $wlThemeColor }}">
     <meta name="mobile-web-app-capable" content="yes">

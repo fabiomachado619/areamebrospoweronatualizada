@@ -152,7 +152,7 @@ class TenantMailConfigService
 
         config(['mail.from' => [
             'address' => $fromAddress ?: config('mail.from.address'),
-            'name' => $fromName ?: config('mail.from.name', 'Getfy'),
+            'name' => $fromName ?: config('mail.from.name', 'Power On'),
         ]]);
         if ($replyTo) {
             config(['mail.reply_to' => ['address' => $replyTo, 'name' => null]]);

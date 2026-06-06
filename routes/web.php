@@ -44,25 +44,30 @@ Route::get('/painel-sw.js', function () {
 })->name('panel.pwa.sw');
 
 Route::get('/', function (\Illuminate\Http\Request $request) {
-    $resolved = app(\App\Services\MemberAreaResolver::class)->resolve($request);
-    if ($resolved && in_array($resolved['access_type'], ['subdomain', 'custom'], true)) {
-        $request->attributes->set('member_area_product', $resolved['product']);
-        $request->attributes->set('member_area_access_type', $resolved['access_type']);
-        $request->attributes->set('member_area_slug', $resolved['slug']);
+    $resolver = app(\App\Services\MemberAreaResolver::class);
+    $hub = $resolver->resolveHubForMainHost();
 
+    if ($hub !== null) {
         if (! $request->user()) {
-            return redirect()->to('/login')->with('error', 'Faça login para acessar a área de membros.');
+            $loginPath = $resolver->officialMemberAreaLoginPath($hub->tenant_id)
+                ?? $resolver->hubMainHostLoginPath($hub);
+
+            return redirect()->to($loginPath ?? '/login');
         }
 
-        if (! $resolved['product']->hasMemberAreaAccess($request->user())) {
-            return redirect()->route('checkout.show', ['slug' => $resolved['product']->checkout_slug])
-                ->with('error', 'Você não tem acesso a esta área. Adquira o produto para continuar.');
+        $user = $request->user();
+        if ($user->canAccessPanel()) {
+            if ($user->isPartner()) {
+                return redirect('/parceiro');
+            }
+
+            return redirect('/dashboard');
         }
 
-        return app()->call(\App\Http\Controllers\MemberAreaAppController::class.'@show', [
-            'request' => $request,
-            'slug' => $resolved['slug'],
-        ]);
+        $homePath = $resolver->officialMemberAreaHomePath($hub->tenant_id);
+        if ($homePath !== null) {
+            return redirect()->to($homePath);
+        }
     }
 
     if (auth()->check()) {
@@ -232,6 +237,8 @@ Route::post('/afiliar/{slug}/cadastro', [\App\Http\Controllers\AffiliateProgramP
 Route::middleware('guest')->group(function () {
     Route::get('/criar-admin', [\App\Http\Controllers\CreateFirstAdminController::class, 'show'])->name('criar-admin');
     Route::post('/criar-admin', [\App\Http\Controllers\CreateFirstAdminController::class, 'store'])->middleware('throttle:5,1');
+    Route::get('/admin/login', [LoginController::class, 'showAdminLoginForm'])->name('admin.login');
+    Route::post('/admin/login', [LoginController::class, 'adminLogin'])->middleware('throttle:5,1');
     Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
     Route::post('/login', [LoginController::class, 'login'])->middleware('throttle:5,1');
     Route::get('/esqueci-senha', [ForgotPasswordController::class, 'showLinkRequestForm'])->name('password.request');
@@ -455,6 +462,16 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
         Route::put('/produtos/alunos/{aluno}', [\App\Http\Controllers\AlunosController::class, 'update'])->name('alunos.update')->where('aluno', '[0-9]+');
         Route::delete('/produtos/alunos/{aluno}', [\App\Http\Controllers\AlunosController::class, 'destroy'])->name('alunos.destroy')->where('aluno', '[0-9]+');
         Route::delete('/produtos/alunos/{aluno}/produtos/{produto}', [\App\Http\Controllers\AlunosController::class, 'removeProduct'])->name('alunos.remove-product')->where('aluno', '[0-9]+');
+        Route::post('/produtos/alunos/{aluno}/reenviar-acesso', [\App\Http\Controllers\AlunosController::class, 'resendAccessEmail'])->name('alunos.resend-access-email')->where('aluno', '[0-9]+');
+
+        Route::get('/area-membros-admin', [\App\Http\Controllers\MemberAreaAdminController::class, 'index'])->name('member-area-admin.index');
+        Route::post('/area-membros-admin/configuracoes', [\App\Http\Controllers\MemberAreaAdminController::class, 'updateSettings'])->name('member-area-admin.settings.update');
+        Route::post('/area-membros-admin/pwa', [\App\Http\Controllers\MemberAreaAdminController::class, 'updatePwa'])->name('member-area-admin.pwa.update');
+        Route::post('/area-membros-admin/pwa/upload-icon', [\App\Http\Controllers\MemberAreaAdminController::class, 'uploadPwaIcon'])->name('member-area-admin.pwa.upload-icon');
+        Route::post('/area-membros-admin/webhooks', [\App\Http\Controllers\EnrollmentWebhookAdminController::class, 'store'])->name('member-area-admin.webhooks.store');
+        Route::put('/area-membros-admin/webhooks/{webhook}', [\App\Http\Controllers\EnrollmentWebhookAdminController::class, 'update'])->name('member-area-admin.webhooks.update');
+        Route::post('/area-membros-admin/webhooks/{webhook}/regenerate-url', [\App\Http\Controllers\EnrollmentWebhookAdminController::class, 'regenerateUrl'])->name('member-area-admin.webhooks.regenerate-url');
+        Route::get('/area-membros-admin/webhooks/logs/{log}', [\App\Http\Controllers\EnrollmentWebhookAdminController::class, 'showLog'])->name('member-area-admin.webhooks.logs.show');
 
         Route::get('/produtos/co-produtores', [\App\Http\Controllers\AffiliatesHubController::class, 'coproducersIndex'])->name('produtos.coproducers.index');
         Route::get('/produtos/afiliados-programas', [\App\Http\Controllers\AffiliatesHubController::class, 'affiliatesProductsIndex'])->name('produtos.affiliates.index');
@@ -490,6 +507,9 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
         Route::post('/produtos/{produto}/member-builder/modules/{module}/lessons', [\App\Http\Controllers\MemberBuilderController::class, 'storeLesson'])->name('member-builder.lessons.store');
         Route::put('/produtos/{produto}/member-builder/lessons/{lesson}', [\App\Http\Controllers\MemberBuilderController::class, 'updateLesson'])->name('member-builder.lessons.update');
         Route::delete('/produtos/{produto}/member-builder/lessons/{lesson}', [\App\Http\Controllers\MemberBuilderController::class, 'destroyLesson'])->name('member-builder.lessons.destroy');
+        Route::post('/produtos/{produto}/member-builder/sections/reorder', [\App\Http\Controllers\MemberBuilderController::class, 'reorderSections'])->name('member-builder.sections.reorder');
+        Route::post('/produtos/{produto}/member-builder/modules/reorder', [\App\Http\Controllers\MemberBuilderController::class, 'reorderModules'])->name('member-builder.modules.reorder');
+        Route::post('/produtos/{produto}/member-builder/lessons/reorder', [\App\Http\Controllers\MemberBuilderController::class, 'reorderLessons'])->name('member-builder.lessons.reorder');
         Route::post('/produtos/{produto}/member-builder/internal-products', [\App\Http\Controllers\MemberBuilderController::class, 'storeInternalProduct'])->name('member-builder.internal-products.store');
         Route::delete('/produtos/{produto}/member-builder/internal-products/{internalProduct}', [\App\Http\Controllers\MemberBuilderController::class, 'destroyInternalProduct'])->name('member-builder.internal-products.destroy');
         Route::post('/produtos/{produto}/member-builder/turmas', [\App\Http\Controllers\MemberBuilderController::class, 'storeTurma'])->name('member-builder.turmas.store');
@@ -504,6 +524,7 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
         Route::put('/produtos/{produto}/member-builder/community-pages/{page}', [\App\Http\Controllers\MemberBuilderController::class, 'updateCommunityPage'])->name('member-builder.community-pages.update');
         Route::delete('/produtos/{produto}/member-builder/community-pages/{page}', [\App\Http\Controllers\MemberBuilderController::class, 'destroyCommunityPage'])->name('member-builder.community-pages.destroy');
         Route::post('/produtos/{produto}/member-builder/send-push', [\App\Http\Controllers\MemberBuilderController::class, 'sendPushNotification'])->name('member-builder.send-push');
+        Route::post('/produtos/{produto}/member-builder/hub', [\App\Http\Controllers\MemberBuilderController::class, 'updateHubMode'])->name('member-builder.hub.update');
     });
 
     Route::get('/vendas/assinaturas', [\App\Http\Controllers\AssinaturasController::class, 'index'])

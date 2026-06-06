@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\MemberAreaResolver;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -17,8 +18,14 @@ class EnsureMemberAreaAccess
     {
         if (! $request->user()) {
             $accessType = $request->attributes->get('member_area_access_type');
-            if (in_array($accessType, ['subdomain', 'custom'], true)) {
-                return redirect()->to('/login')->with('error', 'Faça login para acessar a área de membros.');
+            $resolver = app(MemberAreaResolver::class);
+            if ($resolver->usesHostLoginPath(is_string($accessType) ? $accessType : null)) {
+                $product = $request->attributes->get('member_area_product');
+                $loginPath = $product instanceof \App\Models\Product
+                    ? $resolver->memberAreaLoginPath($request, $product)
+                    : ($resolver->hubMainHostLoginPath() ?? '/login');
+
+                return redirect()->to($loginPath)->with('error', 'Faça login para acessar a área de membros.');
             }
 
             $slug = $request->route('slug') ?? $request->attributes->get('member_area_slug');

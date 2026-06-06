@@ -13,7 +13,7 @@ class PanelPwaController extends Controller
     public function manifest(Request $request): JsonResponse
     {
         $resolved = app(MemberAreaResolver::class)->resolve($request);
-        if ($resolved && in_array($resolved['access_type'], ['subdomain', 'custom'], true)) {
+        if ($resolved && app(MemberAreaResolver::class)->usesHostLoginPath($resolved['access_type'])) {
             $request->attributes->set('member_area_product', $resolved['product']);
             $request->attributes->set('member_area_access_type', $resolved['access_type']);
             $request->attributes->set('member_area_slug', $resolved['slug']);
@@ -24,7 +24,8 @@ class PanelPwaController extends Controller
             ]);
         }
 
-        $appName = config('getfy.app_name', 'Getfy');
+        $appName = config('getfy.app_name', 'Power On');
+        $shortName = config('getfy.pwa_short_name', 'PowerOn');
         $themeColor = config('getfy.pwa_theme_color');
         $themeColor = ($themeColor !== null && $themeColor !== '') ? (string) $themeColor : (string) config('getfy.theme_primary', '#0ea5e9');
 
@@ -75,7 +76,7 @@ class PanelPwaController extends Controller
                     $addIconVariants($icon512Url, '512x512');
                 }
                 if (empty($icons)) {
-                    $fallbackIcon = (string) config('getfy.app_logo_icon', 'https://cdn.getfy.cloud/collapsed-logo.png');
+                    $fallbackIcon = (string) config('getfy.app_logo_icon', '/brand/logo-icon.png');
                     $addIconVariants($fallbackIcon, '192x192');
                     $addIconVariants($fallbackIcon, '512x512');
                 } elseif ($has512 && ! $has192) {
@@ -89,7 +90,7 @@ class PanelPwaController extends Controller
         $manifest = [
             'id' => '/',
             'name' => $appName,
-            'short_name' => $appName,
+            'short_name' => $shortName,
             'start_url' => '/dashboard',
             'scope' => '/',
             'display' => 'standalone',

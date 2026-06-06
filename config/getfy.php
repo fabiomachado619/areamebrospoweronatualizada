@@ -67,19 +67,20 @@ return [
     /** Loja pública de plugins (aba Gerenciar plugins → Loja de plugins). */
     'plugin_store_url' => 'https://store.getfy.cloud',
 
-    'app_name' => 'Getfy',
+    'app_name' => 'Power On',
+    'pwa_short_name' => 'PowerOn',
     'theme_primary' => '#74d909',
-    'app_logo' => 'https://cdn.getfy.cloud/logo-white-v3.png',
-    'app_logo_dark' => 'https://cdn.getfy.cloud/logo-dark-v3.png',
-    'app_logo_icon' => 'https://cdn.getfy.cloud/collapsed-logo-v3.png',
-    'app_logo_icon_dark' => 'https://cdn.getfy.cloud/collapsed-logo-v2.png',
+    'app_logo' => '/brand/logo-full.png',
+    'app_logo_dark' => '/brand/logo-full.png',
+    'app_logo_icon' => '/brand/logo-icon.png',
+    'app_logo_icon_dark' => '/brand/logo-icon.png',
 
     /** White Label plugin (null = default / não aplicado) */
-    'login_hero_image' => null,
-    'favicon_url' => '/brand/favicon.png',
+    'login_hero_image' => '/brand/power-on-logo.png',
+    'favicon_url' => '/brand/favicon-32x32.png',
     'pwa_theme_color' => null,
     /** Ícone do PWA (painel). Usado no manifest e no “Adicionar à tela inicial”. */
-    'pwa_icon' => '/icons/icon.png',
-    'pwa_icon_192' => '/icons/icon.png',
-    'pwa_icon_512' => '/icons/icon.png',
+    'pwa_icon' => '/icons/android-chrome-512x512.png',
+    'pwa_icon_192' => '/icons/android-chrome-192x192.png',
+    'pwa_icon_512' => '/icons/android-chrome-512x512.png',
 ];

@@ -130,7 +130,7 @@ return [
 
     'cookie' => env(
         'SESSION_COOKIE',
-        Str::slug((string) env('APP_NAME', 'Getfy')).'-session'
+        Str::slug((string) env('APP_NAME', 'Power On')).'-session'
     ),
 
     /*

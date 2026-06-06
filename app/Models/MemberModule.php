@@ -12,6 +12,7 @@ class MemberModule extends Model
         'member_section_id',
         'product_id',
         'title',
+        'subtitle',
         'position',
         'thumbnail',
         'show_title_on_cover',

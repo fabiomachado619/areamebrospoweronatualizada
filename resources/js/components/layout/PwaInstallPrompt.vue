@@ -24,7 +24,7 @@ const {
 
 const { registerAndSubscribe, pushRegistered, lastPushError } = usePanelPushSubscribe();
 const page = usePage();
-const appName = computed(() => page.props.appSettings?.app_name || 'Getfy');
+const appName = computed(() => page.props.appSettings?.app_name || 'Power On');
 const pushEnabled = computed(() => !!page.props.push_enabled);
 
 const showBanner = ref(false);

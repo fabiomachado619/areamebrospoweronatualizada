@@ -12,12 +12,13 @@ const flashError = computed(() => page.props.flash?.error ?? null);
 
 const branding = computed(() => page.props.public_branding ?? {});
 const primary = computed(() => branding.value.theme_primary || '#00cc00');
-const appName = computed(() => branding.value.app_name || 'Getfy');
-const logoLight = computed(() => branding.value.app_logo || branding.value.app_logo_icon || 'https://cdn.getfy.cloud/collapsed-logo.png');
+const appName = computed(() => branding.value.app_name || 'Power On');
+const logoLight = computed(() => branding.value.app_logo || branding.value.app_logo_icon || '/brand/logo-full.png');
 const logoDark = computed(() => branding.value.app_logo_dark || branding.value.app_logo_icon_dark || logoLight.value);
-const heroImage = computed(() => branding.value.login_hero_image || 'https://cdn.getfy.cloud/login.webp');
+const heroImage = computed(() => branding.value.login_hero_image || '/brand/power-on-logo.png');
 
 const redirectAfterLogin = computed(() => page.props.redirect ?? null);
+const loginUrl = computed(() => page.props.loginUrl ?? '/login');
 
 const form = useForm({
     email: '',
@@ -27,7 +28,7 @@ const form = useForm({
 });
 
 function submit() {
-    form.post('/login', {
+    form.post(loginUrl.value, {
         onFinish: () => form.reset('password'),
     });
 }

@@ -95,7 +95,7 @@ function buildAiPrompt(payloadText) {
     }
     const referenceJson = JSON.stringify(EXAMPLE_FIELD_MAP, null, 2);
 
-    return `Você é um assistente que mapeia webhooks de checkout (JSON) para o formato \`field_map\` do plugin **Webhook de entrada** do Getfy.
+    return `Você é um assistente que mapeia webhooks de checkout (JSON) para o formato \`field_map\` do plugin **Webhook de entrada** do Power On.
 
 ## Regras do field_map
 - Chaves permitidas (e só estas): \`email\`, \`name\`, \`cpf\`, \`phone\`, \`external_id\`, e opcionalmente \`_strict\` (boolean).

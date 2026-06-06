@@ -47,7 +47,7 @@ class SocialPreviewOpenGraph
      */
     public static function forPlatform(Request $request): array
     {
-        $appName = (string) config('getfy.app_name', config('app.name', 'Getfy'));
+        $appName = (string) config('getfy.app_name', config('app.name', 'Power On'));
         $favicon = BrandFavicon::publicUrl();
         $image = self::resolvePlatformPreviewImage($request) ?? $favicon;
 

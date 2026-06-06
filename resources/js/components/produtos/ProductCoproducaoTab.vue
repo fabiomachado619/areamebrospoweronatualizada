@@ -294,7 +294,7 @@ onMounted(async () => {
                     Conta única (padrão)
                 </div>
                 <p class="mt-2 text-xs leading-relaxed text-zinc-500">
-                    Todo o pagamento cai na <strong>sua</strong> conta CajuPay. O Getfy registra a comissão do co-produtor;
+                    Todo o pagamento cai na <strong>sua</strong> conta CajuPay. O Power On registra a comissão do co-produtor;
                     ele acompanha vendas aqui e saca pelo <strong>Financeiro do parceiro</strong> quando o saldo liberar.
                 </p>
             </div>
@@ -306,7 +306,7 @@ onMounted(async () => {
                 <p class="mt-2 text-xs leading-relaxed text-zinc-500">
                     Cada co-produtor pode ter <strong>seu próprio UUID</strong> (cadastre um por pessoa na lista abaixo).
                     Na venda PIX, a CajuPay reparte o líquido para a conta dele. O percentual do split é configurado
-                    <strong>no painel CajuPay</strong> (o Getfy só guarda o ID).
+                    <strong>no painel CajuPay</strong> (o Power On só guarda o ID).
                 </p>
             </div>
         </div>
@@ -385,7 +385,7 @@ onMounted(async () => {
                     class="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
                     :disabled="!canUseSplitPayout && commissionForm.payout_method !== 'cajupay_split'"
                 >
-                    <option value="internal">Conta única (Getfy / sua CajuPay)</option>
+                    <option value="internal">Conta única (Power On / sua CajuPay)</option>
                     <option value="cajupay_split" :disabled="!canUseSplitPayout">Split direto na CajuPay</option>
                 </select>
             </div>
@@ -478,7 +478,7 @@ onMounted(async () => {
                     v-model="inviteForm.payout_method"
                     class="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
                 >
-                    <option value="internal">Conta única (Getfy)</option>
+                    <option value="internal">Conta única (Power On)</option>
                     <option value="cajupay_split" :disabled="!canUseSplitPayout">Split direto na CajuPay</option>
                 </select>
             </div>

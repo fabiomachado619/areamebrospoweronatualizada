@@ -16,11 +16,13 @@ use App\Models\Product;
 use App\Models\User;
 use App\Models\MemberNotification;
 use App\Models\MemberPushSubscription;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use App\Services\MemberAreaResolver;
 use App\Services\MemberCommentService;
 use App\Services\StorageService;
 use App\Services\GamificationService;
+use App\Services\MemberHubService;
 use App\Services\MemberProgressService;
 use App\Services\TeamAccessService;
 use Illuminate\Http\JsonResponse;
@@ -159,6 +161,7 @@ class MemberBuilderController extends Controller
             'name' => $produto->name,
             'checkout_slug' => $produto->checkout_slug,
             'type' => $produto->type,
+            'is_member_hub' => (bool) $produto->is_member_hub,
             'member_area_config' => $memberAreaConfigForFront,
             'member_area_url' => $memberAreaUrl,
             'member_area_domain' => $produto->memberAreaDomain ? [
@@ -171,12 +174,14 @@ class MemberBuilderController extends Controller
                 'position' => $s->position,
                 'cover_mode' => $s->cover_mode ?? 'vertical',
                 'section_type' => $s->section_type ?? 'courses',
-                'modules' => $s->modules->map(function (MemberModule $m) {
+                'modules' => $s->modules->map(function (MemberModule $m) use ($produto) {
+                    $coverUrl = $this->resolveModuleThumbnailUrl($produto, $m->thumbnail);
                     $base = [
                         'id' => $m->id,
                         'title' => $m->title,
                         'position' => $m->position,
-                        'thumbnail' => $m->thumbnail,
+                        'thumbnail' => $coverUrl,
+                        'thumbnail_url' => $coverUrl,
                         'show_title_on_cover' => $m->show_title_on_cover ?? true,
                         'release_after_days' => $m->release_after_days,
                         'release_at_date' => $m->release_at_date?->format('Y-m-d'),
@@ -601,12 +606,16 @@ class MemberBuilderController extends Controller
                 'release_at_date' => $validated['release_at_date'] ?? null,
             ]);
         } elseif ($sectionType === 'products') {
+            $singleCard = $request->boolean('single_card');
             $validated = $request->validate([
-                'title' => ['required', 'string', 'max:255'],
+                'title' => [$singleCard ? 'nullable' : 'required', 'string', 'max:255'],
+                'subtitle' => ['nullable', 'string', 'max:500'],
                 'related_product_id' => ['required', 'exists:products,id'],
                 'access_type' => ['required', 'string', 'in:paid,free'],
                 'thumbnail' => ['nullable', 'string', 'max:500'],
+                'external_url' => ['nullable', 'string', 'max:500'],
                 'show_title_on_cover' => ['nullable', 'boolean'],
+                'single_card' => ['nullable', 'boolean'],
             ]);
             $related = Product::find($validated['related_product_id']);
             if ($related->tenant_id !== $produto->tenant_id) {
@@ -618,11 +627,32 @@ class MemberBuilderController extends Controller
                 }
                 return back()->with('error', 'Não é possível referenciar o próprio produto.');
             }
+            if (array_key_exists('thumbnail', $validated)) {
+                $validated['thumbnail'] = (new StorageService($produto->tenant_id))->normalizeStoredPath($validated['thumbnail']);
+            }
+            if ($singleCard) {
+                $duplicate = MemberModule::query()
+                    ->where('member_section_id', $section->id)
+                    ->where('related_product_id', $validated['related_product_id'])
+                    ->exists();
+                if ($duplicate) {
+                    $message = 'Este curso já está nesta seção da vitrine.';
+                    if ($request->expectsJson()) {
+                        return response()->json(['message' => $message], 422);
+                    }
+
+                    return back()->with('error', $message);
+                }
+            }
+            $title = trim((string) ($validated['title'] ?? ''));
+            if ($title === '') {
+                $title = $related->name;
+            }
             $max = MemberModule::where('member_section_id', $section->id)->max('position') ?? 0;
             $module = null;
             $createdModules = [];
 
-            if ($related->type === Product::TYPE_AREA_MEMBROS) {
+            if (! $singleCard && $related->type === Product::TYPE_AREA_MEMBROS) {
                 $sourceSections = $related->memberSections()
                     ->where('section_type', 'courses')
                     ->orderBy('position')
@@ -669,11 +699,13 @@ class MemberBuilderController extends Controller
                 $module = MemberModule::create([
                     'member_section_id' => $section->id,
                     'product_id' => $produto->id,
-                    'title' => $validated['title'],
+                    'title' => $title,
+                    'subtitle' => $validated['subtitle'] ?? null,
                     'position' => $max + 1,
                     'related_product_id' => $validated['related_product_id'],
                     'access_type' => $validated['access_type'],
                     'thumbnail' => $validated['thumbnail'] ?? null,
+                    'external_url' => $validated['external_url'] ?? null,
                     'show_title_on_cover' => $validated['show_title_on_cover'] ?? true,
                 ]);
                 $createdModules = [$module];
@@ -686,6 +718,9 @@ class MemberBuilderController extends Controller
                 'thumbnail' => ['nullable', 'string', 'max:500'],
                 'show_title_on_cover' => ['nullable', 'boolean'],
             ]);
+            if (array_key_exists('thumbnail', $validated)) {
+                $validated['thumbnail'] = (new StorageService($produto->tenant_id))->normalizeStoredPath($validated['thumbnail']);
+            }
             $max = MemberModule::where('member_section_id', $section->id)->max('position') ?? 0;
             $module = MemberModule::create([
                 'member_section_id' => $section->id,
@@ -700,7 +735,7 @@ class MemberBuilderController extends Controller
 
         if ($request->expectsJson()) {
             if (is_array($createdModules) && count($createdModules) > 1) {
-                $payloads = array_map(fn (MemberModule $m) => $this->moduleJsonPayloadForStore($m), $createdModules);
+                $payloads = array_map(fn (MemberModule $m) => $this->moduleJsonPayloadForStore($produto, $m), $createdModules);
 
                 return response()->json([
                     'message' => 'Módulos importados.',
@@ -708,7 +743,7 @@ class MemberBuilderController extends Controller
                     'module' => $payloads[0],
                 ]);
             }
-            $payload = $this->moduleJsonPayloadForStore($module);
+            $payload = $this->moduleJsonPayloadForStore($produto, $module);
 
             return response()->json(['message' => 'Módulo criado.', 'module' => $payload, 'modules' => [$payload]]);
         }
@@ -718,13 +753,16 @@ class MemberBuilderController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function moduleJsonPayloadForStore(MemberModule $module): array
+    private function moduleJsonPayloadForStore(Product $produto, MemberModule $module): array
     {
+        $coverUrl = $this->resolveModuleThumbnailUrl($produto, $module->thumbnail);
         $payload = [
             'id' => $module->id,
             'title' => $module->title,
+            'subtitle' => $module->subtitle,
             'position' => $module->position,
-            'thumbnail' => $module->thumbnail,
+            'thumbnail' => $coverUrl,
+            'thumbnail_url' => $coverUrl,
             'show_title_on_cover' => $module->show_title_on_cover ?? true,
             'release_after_days' => $module->release_after_days,
             'release_at_date' => $module->release_at_date?->format('Y-m-d'),
@@ -793,10 +831,12 @@ class MemberBuilderController extends Controller
         } elseif ($sectionType === 'products') {
             $validated = $request->validate([
                 'title' => ['sometimes', 'string', 'max:255'],
+                'subtitle' => ['nullable', 'string', 'max:500'],
                 'position' => ['sometimes', 'integer', 'min:0'],
                 'related_product_id' => ['sometimes', 'exists:products,id'],
                 'access_type' => ['sometimes', 'string', 'in:paid,free'],
                 'thumbnail' => ['nullable', 'string', 'max:500'],
+                'external_url' => ['nullable', 'string', 'max:500'],
                 'show_title_on_cover' => ['sometimes', 'boolean'],
             ]);
             if (isset($validated['related_product_id'])) {
@@ -810,6 +850,19 @@ class MemberBuilderController extends Controller
                     }
                     return back()->with('error', 'Não é possível referenciar o próprio produto.');
                 }
+                $duplicate = MemberModule::query()
+                    ->where('member_section_id', $section->id)
+                    ->where('related_product_id', $validated['related_product_id'])
+                    ->where('id', '!=', $module->id)
+                    ->exists();
+                if ($duplicate) {
+                    $message = 'Este curso já está nesta seção da vitrine.';
+                    if ($request->expectsJson()) {
+                        return response()->json(['message' => $message], 422);
+                    }
+
+                    return back()->with('error', $message);
+                }
             }
         } else {
             $validated = $request->validate([
@@ -819,6 +872,9 @@ class MemberBuilderController extends Controller
                 'thumbnail' => ['nullable', 'string', 'max:500'],
                 'show_title_on_cover' => ['sometimes', 'boolean'],
             ]);
+        }
+        if (array_key_exists('thumbnail', $validated)) {
+            $validated['thumbnail'] = (new StorageService($produto->tenant_id))->normalizeStoredPath($validated['thumbnail']);
         }
         $module->update($validated);
         if ($request->expectsJson()) {
@@ -976,6 +1032,217 @@ class MemberBuilderController extends Controller
             return response()->json(['message' => 'Aula removida.']);
         }
         return back()->with('success', 'Aula removida.');
+    }
+
+    public function reorderSections(Request $request, Product $produto): JsonResponse
+    {
+        $this->authorizeProduct($produto);
+
+        $validated = $request->validate([
+            'sections' => ['required', 'array', 'min:1'],
+            'sections.*.id' => ['required', 'integer'],
+            'sections.*.position' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $ids = collect($validated['sections'])->pluck('id')->unique()->values()->all();
+        $found = MemberSection::query()
+            ->where('product_id', $produto->id)
+            ->whereIn('id', $ids)
+            ->count();
+
+        if ($found !== count($ids)) {
+            return response()->json(['message' => 'Seções inválidas para este produto.'], 422);
+        }
+
+        DB::transaction(function () use ($validated): void {
+            foreach ($validated['sections'] as $row) {
+                MemberSection::query()
+                    ->where('id', $row['id'])
+                    ->update(['position' => (int) $row['position']]);
+            }
+        });
+
+        return response()->json(['message' => 'Ordem salva com sucesso.']);
+    }
+
+    public function reorderModules(Request $request, Product $produto): JsonResponse
+    {
+        $this->authorizeProduct($produto);
+
+        $validated = $request->validate([
+            'modules' => ['required', 'array', 'min:1'],
+            'modules.*.id' => ['required', 'integer'],
+            'modules.*.section_id' => ['required', 'integer'],
+            'modules.*.position' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $moduleIds = collect($validated['modules'])->pluck('id')->unique()->values()->all();
+        $modules = MemberModule::query()
+            ->where('product_id', $produto->id)
+            ->whereIn('id', $moduleIds)
+            ->get()
+            ->keyBy('id');
+
+        if ($modules->count() !== count($moduleIds)) {
+            return response()->json(['message' => 'Módulos inválidos para este produto.'], 422);
+        }
+
+        $sectionIds = collect($validated['modules'])->pluck('section_id')->unique()->values()->all();
+        $sections = MemberSection::query()
+            ->where('product_id', $produto->id)
+            ->whereIn('id', $sectionIds)
+            ->get()
+            ->keyBy('id');
+
+        if ($sections->count() !== count($sectionIds)) {
+            return response()->json(['message' => 'Seções inválidas para este produto.'], 422);
+        }
+
+        $currentSectionIds = $modules->pluck('member_section_id')->unique()->values()->all();
+        $currentSections = MemberSection::query()
+            ->where('product_id', $produto->id)
+            ->whereIn('id', $currentSectionIds)
+            ->get()
+            ->keyBy('id');
+
+        foreach ($validated['modules'] as $row) {
+            $module = $modules->get($row['id']);
+            $targetSection = $sections->get($row['section_id']);
+            if (! $module || ! $targetSection) {
+                return response()->json(['message' => 'Módulo ou seção inválidos.'], 422);
+            }
+
+            $sourceSection = $currentSections->get($module->member_section_id);
+            if (! $sourceSection) {
+                return response()->json(['message' => 'Seção de origem do módulo não encontrada.'], 422);
+            }
+
+            if ((int) $row['section_id'] !== (int) $module->member_section_id
+                && $targetSection->section_type !== $sourceSection->section_type) {
+                return response()->json([
+                    'message' => 'Não é possível mover módulos entre seções de tipos diferentes.',
+                ], 422);
+            }
+        }
+
+        DB::transaction(function () use ($validated): void {
+            foreach ($validated['modules'] as $row) {
+                MemberModule::query()
+                    ->where('id', $row['id'])
+                    ->update([
+                        'member_section_id' => (int) $row['section_id'],
+                        'position' => (int) $row['position'],
+                    ]);
+            }
+        });
+
+        return response()->json(['message' => 'Ordem salva com sucesso.']);
+    }
+
+    public function reorderLessons(Request $request, Product $produto): JsonResponse
+    {
+        $this->authorizeProduct($produto);
+
+        $validated = $request->validate([
+            'lessons' => ['required', 'array', 'min:1'],
+            'lessons.*.id' => ['required', 'integer'],
+            'lessons.*.module_id' => ['required', 'integer'],
+            'lessons.*.position' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $lessonIds = collect($validated['lessons'])->pluck('id')->unique()->values()->all();
+        $lessons = MemberLesson::query()
+            ->where('product_id', $produto->id)
+            ->whereIn('id', $lessonIds)
+            ->get()
+            ->keyBy('id');
+
+        if ($lessons->count() !== count($lessonIds)) {
+            return response()->json(['message' => 'Aulas inválidas para este produto.'], 422);
+        }
+
+        $moduleIds = collect($validated['lessons'])->pluck('module_id')->unique()->values()->all();
+        $modules = MemberModule::query()
+            ->where('product_id', $produto->id)
+            ->whereIn('id', $moduleIds)
+            ->with('section:id,section_type')
+            ->get()
+            ->keyBy('id');
+
+        if ($modules->count() !== count($moduleIds)) {
+            return response()->json(['message' => 'Módulos inválidos para este produto.'], 422);
+        }
+
+        foreach ($validated['lessons'] as $row) {
+            $lesson = $lessons->get($row['id']);
+            $targetModule = $modules->get($row['module_id']);
+            if (! $lesson || ! $targetModule) {
+                return response()->json(['message' => 'Aula ou módulo inválidos.'], 422);
+            }
+
+            $sectionType = $targetModule->section?->section_type ?? 'courses';
+            if ($sectionType !== 'courses') {
+                return response()->json([
+                    'message' => 'Aulas só podem ser organizadas em módulos de seções do tipo Cursos/Aulas.',
+                ], 422);
+            }
+
+            if ($targetModule->source_member_module_id !== null) {
+                return response()->json([
+                    'message' => 'Não é possível mover aulas para módulos embutidos de outro produto.',
+                ], 422);
+            }
+
+            if ((int) $row['module_id'] !== (int) $lesson->member_module_id) {
+                $sourceModule = $modules->get($lesson->member_module_id)
+                    ?? MemberModule::query()->where('product_id', $produto->id)->find($lesson->member_module_id);
+                if ($sourceModule?->source_member_module_id !== null) {
+                    return response()->json([
+                        'message' => 'Não é possível mover aulas de módulos embutidos de outro produto.',
+                    ], 422);
+                }
+            }
+        }
+
+        DB::transaction(function () use ($validated): void {
+            foreach ($validated['lessons'] as $row) {
+                MemberLesson::query()
+                    ->where('id', $row['id'])
+                    ->update([
+                        'member_module_id' => (int) $row['module_id'],
+                        'position' => (int) $row['position'],
+                    ]);
+            }
+        });
+
+        return response()->json(['message' => 'Ordem salva com sucesso.']);
+    }
+
+    public function updateHubMode(Request $request, Product $produto): JsonResponse
+    {
+        $this->authorizeProduct($produto);
+        if ($produto->type !== Product::TYPE_AREA_MEMBROS) {
+            return response()->json(['message' => 'Apenas áreas de membros podem ser hub.'], 422);
+        }
+
+        $validated = $request->validate([
+            'is_member_hub' => ['required', 'boolean'],
+        ]);
+
+        $hubService = app(MemberHubService::class);
+
+        if ($validated['is_member_hub']) {
+            $hubService->designateHub($produto);
+        } else {
+            $hubService->clearHub($produto);
+        }
+
+        return response()->json([
+            'message' => $validated['is_member_hub']
+                ? 'Esta área foi definida como HUB principal.'
+                : 'Modo HUB desativado para esta área.',
+            'is_member_hub' => (bool) $produto->fresh()->is_member_hub,
+        ]);
     }
 
     // Internal products
@@ -1546,5 +1813,14 @@ class MemberBuilderController extends Controller
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function resolveModuleThumbnailUrl(Product $product, ?string $thumbnail): ?string
+    {
+        if ($thumbnail === null || trim($thumbnail) === '') {
+            return null;
+        }
+
+        return (new StorageService($product->tenant_id))->resolvePublicUrl($thumbnail);
     }
 }

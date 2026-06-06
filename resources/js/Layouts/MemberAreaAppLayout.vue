@@ -79,14 +79,44 @@ function onWindowScroll() {
 }
 
 const basePath = computed(() => `/m/${slug.value}`);
+const homePath = computed(() => {
+    const url = props.value?.home_url;
+    if (url && typeof url === 'string' && url.trim() !== '') {
+        return url.startsWith('/') ? url : `/${url}`;
+    }
+    return basePath.value;
+});
+const homeHref = computed(() => {
+    const full = props.value?.member_area_home_url;
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/m/') && full) {
+        return full;
+    }
+    return homePath.value;
+});
+function sidebarItemHref(item) {
+    if (item.open_external) return item.link;
+    const path = item.link || '/';
+    if (path === '/' || path === '') {
+        return homeHref.value;
+    }
+    return path.startsWith('/') ? basePath.value + path : basePath.value + '/' + path;
+}
 /** Path do login da área atual (slug em path ou /login em domínio/subdomínio próprio). */
 const memberAreaLoginPath = computed(() => {
+    const fromServer = props.value?.member_area_login_path;
+    if (fromServer && typeof fromServer === 'string') {
+        return fromServer;
+    }
     if (typeof window !== 'undefined') {
-        return window.location.pathname.startsWith('/m/') ? `${basePath.value}/login` : '/login';
+        if (window.location.pathname.startsWith('/m/')) {
+            const home = homePath.value.replace(/\/$/, '');
+            return `${home}/login`;
+        }
+        return '/login';
     }
     const bu = props.value?.base_url;
     if (bu && typeof bu === 'string' && bu.includes('/m/')) {
-        return `${basePath.value}/login`;
+        return `${homePath.value.replace(/\/$/, '')}/login`;
     }
     return '/login';
 });
@@ -542,7 +572,7 @@ watch(
             :style="{ color: 'var(--ma-text)' }"
         >
             <div class="flex min-w-0 shrink items-center gap-4 md:gap-6">
-                <Link :href="basePath" class="flex shrink-0 items-center gap-4" @click="closeMobileMenu">
+                <Link :href="homeHref" class="flex shrink-0 items-center gap-4" @click="closeMobileMenu">
                     <img
                         v-if="headerLogo"
                         :src="headerLogo"
@@ -570,7 +600,7 @@ watch(
                         </a>
                         <Link
                             v-else
-                            :href="item.link.startsWith('/') ? basePath + item.link : basePath + '/' + item.link"
+                            :href="sidebarItemHref(item)"
                             class="rounded-lg px-3 py-2 text-sm font-medium text-white/90 drop-shadow hover:bg-white/10"
                         >
                             {{ item.title }}
@@ -786,7 +816,7 @@ watch(
                             </a>
                             <Link
                                 v-else
-                                :href="item.link.startsWith('/') ? basePath + item.link : basePath + '/' + item.link"
+                                :href="sidebarItemHref(item)"
                                 class="rounded-lg px-4 py-3 text-sm font-medium text-zinc-200 hover:bg-zinc-800 hover:text-white"
                                 @click="closeMobileMenu"
                             >

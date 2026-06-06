@@ -127,7 +127,7 @@ function confirmCancel(campaign) {
                 v-if="cloud_mode"
                 class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
             >
-                Se você estiver usando o Getfy em modo cloud, não é necessário configurar o cron; o envio já vem
+                Se você estiver usando o Power On em modo cloud, não é necessário configurar o cron; o envio já vem
                 configurado automaticamente.
             </div>
 
@@ -235,7 +235,7 @@ function confirmCancel(campaign) {
             >
                 <p class="font-medium text-emerald-800 dark:text-emerald-200">Modo cloud</p>
                 <p class="mt-1 text-sm text-emerald-700 dark:text-emerald-300">
-                    Se você estiver usando o Getfy em modo cloud, não é necessário configurar o cron; o envio já vem
+                    Se você estiver usando o Power On em modo cloud, não é necessário configurar o cron; o envio já vem
                     configurado automaticamente.
                 </p>
             </div>

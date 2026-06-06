@@ -47,7 +47,7 @@ class CheckoutOpenGraph
             'image' => $image,
             'url' => $request->url(),
             'type' => 'website',
-            'site_name' => (string) config('getfy.app_name', config('app.name', 'Getfy')),
+            'site_name' => (string) config('getfy.app_name', config('app.name', 'Power On')),
             'favicon' => $favicon,
         ];
     }

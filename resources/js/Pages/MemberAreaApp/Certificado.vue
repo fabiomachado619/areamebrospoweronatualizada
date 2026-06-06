@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue';
 import MemberAreaAppLayout from '@/Layouts/MemberAreaAppLayout.vue';
-import { Link } from '@inertiajs/vue3';
+import { Link, usePage } from '@inertiajs/vue3';
 
 defineOptions({ layout: MemberAreaAppLayout });
 
@@ -15,6 +15,9 @@ const props = defineProps({
     progress_percent: { type: Number, default: 0 },
     completion_required_percent: { type: Number, default: 100 },
 });
+
+const page = usePage();
+const memberAreaHomeUrl = computed(() => page.props.home_url ?? `/m/${props.slug}`);
 
 const printFormatOverride = ref(null);
 const courseTitle = computed(() => props.certificate?.title || props.product?.name || '');
@@ -244,7 +247,7 @@ onUnmounted(() => {
                     Salvar PDF A3
                 </button>
             </template>
-            <Link :href="`/m/${slug}`" class="rounded-xl border-2 px-5 py-2.5 text-sm font-medium transition hover:opacity-90" style="border-color: var(--ma-primary); color: var(--ma-primary)">
+            <Link :href="memberAreaHomeUrl" class="rounded-xl border-2 px-5 py-2.5 text-sm font-medium transition hover:opacity-90" style="border-color: var(--ma-primary); color: var(--ma-primary)">
                 Voltar à área de membros
             </Link>
         </div>

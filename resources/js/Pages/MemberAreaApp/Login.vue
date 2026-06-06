@@ -15,9 +15,17 @@ const { canShowInstallButton, triggerInstall } = usePwaInstall(props.slug);
 const showPassword = ref(false);
 
 const manifestUrl = computed(() => {
+    if (props.product.manifest_url) return props.product.manifest_url;
     if (typeof window === 'undefined') return null;
+    if (!window.location.pathname.startsWith('/m/')) {
+        return `${window.location.origin}/manifest.json`;
+    }
     return `${window.location.origin}/m/${props.slug}/manifest.json`;
 });
+
+const installAppName = computed(() =>
+    props.product.pwa_name || props.product.pwa_short_name || props.product.title || props.product.name || 'App'
+);
 
 const form = useForm({
     email: '',
@@ -37,7 +45,7 @@ const backgroundStyle = () => {
     <Head>
         <title>{{ product.title || product.name || 'Área de Membros' }}</title>
         <link v-if="manifestUrl" rel="manifest" :href="manifestUrl" />
-        <meta name="theme-color" :content="product.primary_color || '#0ea5e9'" />
+        <meta name="theme-color" :content="product.pwa_theme_color || product.primary_color || '#0ea5e9'" />
         <meta name="mobile-web-app-capable" content="yes" />
     </Head>
     <div
@@ -146,6 +154,6 @@ const backgroundStyle = () => {
                 </button>
             </form>
         </div>
-        <PwaInstallPrompt :app-name="product?.name || product?.title || 'App'" :slug="slug" />
+        <PwaInstallPrompt :app-name="installAppName" :slug="slug" />
     </div>
 </template>

@@ -35,7 +35,7 @@ return [
         [
             'threshold' => 5_000_000,
             'slug' => 'lenda-getfy',
-            'name' => 'Lenda da Getfy',
+            'name' => 'Lenda da Power On',
             'image' => 'https://cdn.getfy.cloud/conquistas/5M.png',
         ],
         [

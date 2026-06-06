@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch } from 'vue';
-import { X, Pencil, Trash2, Package, Loader2 } from 'lucide-vue-next';
+import { X, Pencil, Trash2, Package, Loader2, Mail } from 'lucide-vue-next';
 import axios from 'axios';
 import Button from '@/components/ui/Button.vue';
 import Checkbox from '@/components/ui/Checkbox.vue';
@@ -9,6 +9,7 @@ const props = defineProps({
     open: { type: Boolean, default: false },
     aluno: { type: Object, default: null },
     produtos: { type: Array, default: () => [] },
+    enableResendAccessEmail: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['close', 'updated', 'deleted']);
@@ -23,6 +24,7 @@ const form = ref({
 });
 const removingProductId = ref(null);
 const deleting = ref(false);
+const resendingEmail = ref(false);
 const toast = ref({ message: null, type: null });
 
 watch(
@@ -104,6 +106,19 @@ async function removeProduct(produtoId) {
         );
     } finally {
         removingProductId.value = null;
+    }
+}
+
+async function resendAccessEmail() {
+    if (!props.aluno) return;
+    resendingEmail.value = true;
+    try {
+        const { data } = await axios.post(`/produtos/alunos/${props.aluno.id}/reenviar-acesso`);
+        showToast(data.message ?? 'E-mail de acesso reenviado.', 'success');
+    } catch (err) {
+        showToast(err.response?.data?.message ?? 'Erro ao reenviar e-mail.', 'error');
+    } finally {
+        resendingEmail.value = false;
     }
 }
 
@@ -212,6 +227,17 @@ function showToast(message, type) {
                                 </p>
                             </div>
                             <div class="flex flex-col gap-2 pt-4">
+                                <Button
+                                    v-if="enableResendAccessEmail"
+                                    variant="outline"
+                                    class="w-full justify-start"
+                                    :disabled="resendingEmail"
+                                    @click="resendAccessEmail"
+                                >
+                                    <Loader2 v-if="resendingEmail" class="h-4 w-4 animate-spin" />
+                                    <Mail v-else class="h-4 w-4" />
+                                    Reenviar e-mail de acesso
+                                </Button>
                                 <Button variant="outline" class="w-full justify-start" @click="startEdit">
                                     <Pencil class="h-4 w-4" />
                                     Editar

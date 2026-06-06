@@ -8,6 +8,8 @@ use App\Models\MemberPushSubscription;
 use App\Models\PanelNotification;
 use App\Plugins\PluginExtensionRegistry;
 use App\Plugins\PluginRegistry;
+use App\Models\Product;
+use App\Services\MemberAreaResolver;
 use App\Services\RefundService;
 use App\Services\SalesAchievementsService;
 use App\Services\StorageService;
@@ -49,7 +51,11 @@ class HandleInertiaRequests extends Middleware
         $tenantId = $user?->tenant_id;
 
         $path = $request->path();
-        $isMemberArea = str_starts_with($path, 'm/') || $request->attributes->get('member_area_slug');
+        $memberAreaResolver = app(MemberAreaResolver::class);
+        $resolvedMemberArea = $memberAreaResolver->resolve($request);
+        $isMemberArea = str_starts_with($path, 'm/')
+            || $request->attributes->get('member_area_slug')
+            || ($resolvedMemberArea && $memberAreaResolver->usesHostLoginPath($resolvedMemberArea['access_type']));
         $isCheckout = str_starts_with($path, 'c/') || str_starts_with($path, 'checkout') || str_starts_with($path, 'api-checkout');
         $skipPanelPwa = $isMemberArea || $isCheckout;
         $isPanelContext = $user && $user->canAccessPanel() && ! $isMemberArea && ! $isCheckout;
@@ -96,8 +102,24 @@ class HandleInertiaRequests extends Middleware
         $memberNotificationsUnreadCount = 0;
         $memberPushSubscribed = false;
         $refundEligibility = null;
+        $homeNav = [];
+        $memberAreaLoginPath = null;
+        if ($isMemberArea) {
+            $product = $request->route('product') ?? $request->attributes->get('member_area_product');
+            if (! $product && $resolvedMemberArea) {
+                $product = $resolvedMemberArea['product'];
+                $request->attributes->set('member_area_access_type', $resolvedMemberArea['access_type']);
+                $request->attributes->set('member_area_slug', $resolvedMemberArea['slug']);
+            }
+            if ($product && $product->type === Product::TYPE_AREA_MEMBROS) {
+                $memberAreaLoginPath = app(MemberAreaResolver::class)->memberAreaLoginPath($request, $product);
+            }
+        }
         if ($user && $isMemberArea) {
             $product = $request->route('product') ?? $request->attributes->get('member_area_product');
+            if (! $product && $resolvedMemberArea) {
+                $product = $resolvedMemberArea['product'];
+            }
             if ($product) {
                 $memberNotificationsUnreadCount = MemberNotification::forUser($user->id)
                     ->forProduct($product->id)
@@ -106,8 +128,9 @@ class HandleInertiaRequests extends Middleware
                 $memberPushSubscribed = MemberPushSubscription::where('user_id', $user->id)
                     ->where('product_id', $product->id)
                     ->exists();
-                if ($product->type === \App\Models\Product::TYPE_AREA_MEMBROS) {
+                if ($product->type === Product::TYPE_AREA_MEMBROS) {
                     $refundEligibility = app(RefundService::class)->eligibility($product, $user);
+                    $homeNav = app(MemberAreaResolver::class)->homeNavigationForProduct($product);
                 }
             }
         }
@@ -167,6 +190,10 @@ class HandleInertiaRequests extends Middleware
             'member_notifications_unread_count' => $memberNotificationsUnreadCount,
             'member_push_subscribed' => $memberPushSubscribed,
             'refund_eligibility' => $refundEligibility,
+            'home_url' => $homeNav['home_url'] ?? null,
+            'member_area_home_url' => $homeNav['member_area_home_url'] ?? null,
+            'hub_slug' => $homeNav['hub_slug'] ?? null,
+            'member_area_login_path' => $memberAreaLoginPath,
         ];
 
         if (! $skipPanelPwa) {
@@ -194,6 +221,7 @@ class HandleInertiaRequests extends Middleware
             'cupons.index' => 'Cupons',
             'assinaturas.index' => 'Assinaturas',
             'alunos.index' => 'Alunos',
+            'member-area-admin.index' => 'Área de Membros',
             'relatorios.index' => 'Relatórios',
             'settings.index' => 'Configurações',
             'profile.index' => 'Meu perfil',
@@ -224,10 +252,10 @@ class HandleInertiaRequests extends Middleware
         $pwaTheme = ($pwaTheme !== null && $pwaTheme !== '') ? (string) $pwaTheme : $themePrimary;
         $favicon = BrandFavicon::publicUrl();
         $loginHero = config('getfy.login_hero_image');
-        $loginHero = ($loginHero !== null && $loginHero !== '') ? (string) $loginHero : 'https://cdn.getfy.cloud/login-v2.webp';
+        $loginHero = ($loginHero !== null && $loginHero !== '') ? (string) $loginHero : '/brand/power-on-logo.png';
 
         return [
-            'app_name' => (string) config('getfy.app_name', 'Getfy'),
+            'app_name' => (string) config('getfy.app_name', 'Power On'),
             'theme_primary' => $themePrimary,
             'pwa_theme_color' => $pwaTheme,
             'app_logo' => (string) config('getfy.app_logo'),

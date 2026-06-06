@@ -23,7 +23,7 @@ export function logTrackingDebug(label, detail) {
         return;
     }
     const msg = detail !== undefined ? detail : '';
-    console.info(`[Getfy Tracking] ${label}`, msg);
+    console.info(`[Power On Tracking] ${label}`, msg);
 }
 
 export function logTrackingApiError(endpoint, error) {
@@ -32,5 +32,5 @@ export function logTrackingApiError(endpoint, error) {
     }
     const status = error?.response?.status;
     const message = error?.response?.data?.message || error?.message || 'erro desconhecido';
-    console.warn(`[Getfy Tracking] Falha ${endpoint}${status ? ` (${status})` : ''}: ${message}`);
+    console.warn(`[Power On Tracking] Falha ${endpoint}${status ? ` (${status})` : ''}: ${message}`);
 }

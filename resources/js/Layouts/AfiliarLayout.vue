@@ -6,8 +6,8 @@ import ThemeToggler from '@/components/layout/ThemeToggler.vue';
 const page = usePage();
 const branding = computed(() => page.props.public_branding ?? {});
 const primary = computed(() => branding.value.theme_primary || '#00cc00');
-const appName = computed(() => branding.value.app_name || 'Getfy');
-const logoLight = computed(() => branding.value.app_logo || branding.value.app_logo_icon || 'https://cdn.getfy.cloud/collapsed-logo.png');
+const appName = computed(() => branding.value.app_name || 'Power On');
+const logoLight = computed(() => branding.value.app_logo || branding.value.app_logo_icon || '/brand/logo-full.png');
 const logoDark = computed(() => branding.value.app_logo_dark || branding.value.app_logo_icon_dark || logoLight.value);
 </script>
 

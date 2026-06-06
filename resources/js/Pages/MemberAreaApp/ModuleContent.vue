@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { Link, router } from '@inertiajs/vue3';
+import { Link, router, usePage } from '@inertiajs/vue3';
 import MemberAreaAppLayout from '@/Layouts/MemberAreaAppLayout.vue';
 import Button from '@/components/ui/Button.vue';
 import MemberAreaVideoPlayer from '@/components/MemberAreaVideoPlayer.vue';
@@ -29,6 +29,9 @@ const props = defineProps({
         default: () => ({ completed: 0, total: 0 }),
     },
 });
+
+const page = usePage();
+const memberAreaHomeUrl = computed(() => page.props.home_url ?? `/m/${props.slug}`);
 
 function normalizePdfFiles(lesson, defaultName = 'Material') {
     const list = Array.isArray(lesson?.content_files) ? lesson.content_files : [];
@@ -189,6 +192,23 @@ function scrollCarousel(sectionId, direction) {
     el.scrollBy({ left: 272 * direction, behavior: 'smooth' });
 }
 
+const brokenCoverIds = ref(new Set());
+
+function moduleCardCover(mod) {
+    if (brokenCoverIds.value.has(mod.id)) {
+        return null;
+    }
+    return mod.thumbnail_url || mod.thumbnail || null;
+}
+
+function onModuleCoverError(modId) {
+    brokenCoverIds.value = new Set([...brokenCoverIds.value, modId]);
+}
+
+function moduleCoverPlaceholderClass() {
+    return 'absolute inset-0 flex items-center justify-center bg-gradient-to-br from-zinc-700 via-zinc-800 to-zinc-900';
+}
+
 function onPdfReaderLastPage() {
     markComplete();
 }
@@ -285,7 +305,7 @@ function onPdfReaderLastPage() {
                 </div>
 
                 <div class="flex items-center justify-between">
-                    <Link :href="`/m/${slug}`" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)]">← Voltar ao início</Link>
+                    <Link :href="memberAreaHomeUrl" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)]">← Voltar ao início</Link>
                     <Button @click="markComplete" :disabled="completed">
                         {{ completed ? 'Concluído' : 'Marcar como concluído' }}
                     </Button>
@@ -326,7 +346,7 @@ function onPdfReaderLastPage() {
             <template v-else>
                 <div class="rounded-xl border border-zinc-700 bg-zinc-800/50 p-12 text-center">
                     <p class="text-zinc-500">Selecione uma aula na lista à direita.</p>
-                    <Link :href="`/m/${slug}`" class="mt-4 inline-block text-sm text-[var(--ma-primary)] hover:underline">← Voltar ao início</Link>
+                    <Link :href="memberAreaHomeUrl" class="mt-4 inline-block text-sm text-[var(--ma-primary)] hover:underline">← Voltar ao início</Link>
                 </div>
             </template>
             </main>
@@ -334,7 +354,7 @@ function onPdfReaderLastPage() {
             <!-- Sidebar à direita: lista de aulas do módulo -->
             <aside class="w-full shrink-0 rounded-xl border border-zinc-700 bg-zinc-800/50 lg:w-72">
                 <div class="border-b border-zinc-700 p-4">
-                    <Link :href="`/m/${slug}`" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)]">← Início</Link>
+                    <Link :href="memberAreaHomeUrl" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)]">← Início</Link>
                     <h2 class="mt-2 text-lg font-semibold">{{ module.title }}</h2>
                     <p v-if="module.section" class="text-xs text-zinc-500">{{ module.section.title }}</p>
                     <div v-if="courseProgress.total > 0" class="mt-3 space-y-1">
@@ -423,8 +443,16 @@ function onPdfReaderLastPage() {
                                 :class="{ 'ring-2 ring-[var(--ma-primary)]/50': mod.id === module.id }"
                             >
                                 <div :class="[(section.cover_mode === 'horizontal' ? 'aspect-video' : 'aspect-[2/3]'), 'relative w-full bg-zinc-700 flex items-center justify-center overflow-hidden']">
-                                    <img v-if="mod.thumbnail" :src="mod.thumbnail" :alt="mod.title" class="absolute inset-0 h-full w-full object-cover" />
-                                    <svg v-else class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                    <img
+                                        v-if="moduleCardCover(mod)"
+                                        :src="moduleCardCover(mod)"
+                                        :alt="mod.title"
+                                        class="absolute inset-0 h-full w-full object-cover"
+                                        @error="onModuleCoverError(mod.id)"
+                                    />
+                                    <div v-else :class="moduleCoverPlaceholderClass()">
+                                        <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                    </div>
                                     <div v-if="mod.show_title_on_cover !== false" class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8">
                                         <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
                                     </div>
@@ -435,8 +463,16 @@ function onPdfReaderLastPage() {
                                 class="flex w-64 shrink-0 cursor-not-allowed flex-col rounded-xl overflow-hidden bg-zinc-800/30 text-left opacity-70"
                             >
                                 <div :class="[(section.cover_mode === 'horizontal' ? 'aspect-video' : 'aspect-[2/3]'), 'relative w-full bg-zinc-700 flex items-center justify-center overflow-hidden']">
-                                    <img v-if="mod.thumbnail" :src="mod.thumbnail" :alt="mod.title" class="absolute inset-0 h-full w-full object-cover" />
-                                    <svg v-else class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                    <img
+                                        v-if="moduleCardCover(mod)"
+                                        :src="moduleCardCover(mod)"
+                                        :alt="mod.title"
+                                        class="absolute inset-0 h-full w-full object-cover"
+                                        @error="onModuleCoverError(mod.id)"
+                                    />
+                                    <div v-else :class="moduleCoverPlaceholderClass()">
+                                        <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                    </div>
                                     <div class="absolute inset-0 bg-black/50" />
                                     <div class="absolute inset-x-0 bottom-0 px-3 pb-3 pt-8">
                                         <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>

@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed, reactive, nextTick, onMounted, watch } from 'vue';
 import axios from 'axios';
+import draggable from 'vuedraggable';
 import MemberBuilderPreview from '@/components/member-builder/MemberBuilderPreview.vue';
+import ModuleCoverImage from '@/components/member-builder/ModuleCoverImage.vue';
 import Button from '@/components/ui/Button.vue';
 import Toggle from '@/components/ui/Toggle.vue';
 import {
@@ -31,6 +33,7 @@ import {
     Trophy,
     BarChart3,
     Presentation,
+    GripVertical,
 } from 'lucide-vue-next';
 import {
     communityPageIconComponents,
@@ -85,6 +88,28 @@ const pushSubscribersCount = computed(() => props.produto.push_subscribers_count
 const pushForm = reactive({ title: '', body: '' });
 const pushSending = ref(false);
 const pushSendResult = ref(null);
+const isMemberHub = ref(!!props.produto.is_member_hub);
+const hubModeSaving = ref(false);
+const hubModeMessage = ref(null);
+
+async function saveHubMode(enabled) {
+    hubModeSaving.value = true;
+    hubModeMessage.value = null;
+    try {
+        const { data } = await axios.post(
+            `${base.value}/hub`,
+            { is_member_hub: enabled },
+            { headers: headers() }
+        );
+        isMemberHub.value = !!data?.is_member_hub;
+        hubModeMessage.value = { success: true, message: data?.message ?? 'Hub atualizado.' };
+    } catch (e) {
+        const msg = e.response?.data?.message ?? e.message ?? 'Erro ao atualizar hub.';
+        hubModeMessage.value = { success: false, message: msg };
+    } finally {
+        hubModeSaving.value = false;
+    }
+}
 /** Incrementar para forçar o preview a atualizar em tempo real (ex.: após adicionar módulo) */
 const previewKey = ref(0);
 async function sendPushNotification() {
@@ -161,6 +186,12 @@ const defaultConfig = () => ({
         days: 7,
         mode: 'manual',
         ...props.produto.member_area_config?.refund,
+    },
+    my_courses: {
+        title: 'Meus Cursos',
+        cover_mode: 'vertical',
+        enabled: true,
+        ...props.produto.member_area_config?.my_courses,
     },
 });
 
@@ -532,6 +563,191 @@ const expandedModules = ref(new Set());
 const editingSectionId = ref(null);
 const editingModuleId = ref(null);
 
+function cloneBuilderSections(sections) {
+    return JSON.parse(JSON.stringify(sections ?? []))
+        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+        .map((section) => ({
+            ...section,
+            modules: [...(section.modules ?? [])].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).map((mod) => ({
+                ...mod,
+                lessons: [...(mod.lessons ?? [])].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
+            })),
+        }));
+}
+
+const builderSections = ref(cloneBuilderSections(props.produto.sections));
+watch(
+    () => props.produto.sections,
+    (sections) => {
+        builderSections.value = cloneBuilderSections(sections);
+    },
+    { deep: true }
+);
+
+const reorderSaving = ref(false);
+const lessonDragActive = ref(false);
+const reorderToast = ref({ message: null, type: null });
+let reorderToastTimer = null;
+
+function showReorderToast(message, type = 'success') {
+    reorderToast.value = { message, type };
+    if (reorderToastTimer) clearTimeout(reorderToastTimer);
+    reorderToastTimer = setTimeout(() => {
+        reorderToast.value = { message: null, type: null };
+        reorderToastTimer = null;
+    }, 3500);
+}
+
+function moduleDragGroup(section) {
+    const type = section.section_type ?? 'courses';
+    return { name: `modules-${type}`, pull: true, put: true };
+}
+
+function lessonDragGroupForModule(mod) {
+    if (mod?.source_member_module_id) {
+        return { name: 'lessons-embedded', pull: false, put: false };
+    }
+    return { name: 'lessons', pull: true, put: true };
+}
+
+function isModuleLessonDragDisabled(mod) {
+    return !!mod?.source_member_module_id;
+}
+
+function buildSectionsReorderPayload() {
+    return builderSections.value.map((section, index) => ({
+        id: section.id,
+        position: index + 1,
+    }));
+}
+
+function buildModulesReorderPayload() {
+    const modules = [];
+    for (const section of builderSections.value) {
+        (section.modules ?? []).forEach((mod, index) => {
+            modules.push({
+                id: mod.id,
+                section_id: section.id,
+                position: index + 1,
+            });
+        });
+    }
+    return modules;
+}
+
+function buildLessonsReorderPayload() {
+    const lessons = [];
+    for (const section of builderSections.value) {
+        if ((section.section_type ?? 'courses') !== 'courses') continue;
+        for (const mod of section.modules ?? []) {
+            if (mod.source_member_module_id) continue;
+            (mod.lessons ?? []).forEach((lesson, index) => {
+                lessons.push({
+                    id: lesson.id,
+                    module_id: mod.id,
+                    position: index + 1,
+                });
+            });
+        }
+    }
+    return lessons;
+}
+
+let dragSnapshot = null;
+
+function captureDragSnapshot() {
+    dragSnapshot = JSON.parse(JSON.stringify(builderSections.value));
+}
+
+async function persistSectionsReorder() {
+    if (reorderSaving.value) return;
+    reorderSaving.value = true;
+    const previous = dragSnapshot;
+    dragSnapshot = null;
+    try {
+        await axios.post(
+            `${base.value}/sections/reorder`,
+            { sections: buildSectionsReorderPayload() },
+            { headers: headers() }
+        );
+        showReorderToast('Ordem salva com sucesso');
+        previewKey.value += 1;
+    } catch (e) {
+        if (previous) builderSections.value = previous;
+        showReorderToast(e.response?.data?.message ?? 'Erro ao salvar a ordem das seções.', 'error');
+    } finally {
+        reorderSaving.value = false;
+    }
+}
+
+async function persistModulesReorder() {
+    if (reorderSaving.value) return;
+    reorderSaving.value = true;
+    const previous = dragSnapshot;
+    dragSnapshot = null;
+    try {
+        await axios.post(
+            `${base.value}/modules/reorder`,
+            { modules: buildModulesReorderPayload() },
+            { headers: headers() }
+        );
+        showReorderToast('Ordem salva com sucesso');
+        previewKey.value += 1;
+    } catch (e) {
+        if (previous) builderSections.value = previous;
+        showReorderToast(e.response?.data?.message ?? 'Erro ao salvar a ordem dos módulos.', 'error');
+    } finally {
+        reorderSaving.value = false;
+    }
+}
+
+async function persistLessonsReorder() {
+    if (reorderSaving.value) return;
+    reorderSaving.value = true;
+    const previous = dragSnapshot;
+    dragSnapshot = null;
+    lessonDragActive.value = false;
+    try {
+        await axios.post(
+            `${base.value}/lessons/reorder`,
+            { lessons: buildLessonsReorderPayload() },
+            { headers: headers() }
+        );
+        showReorderToast('Ordem salva com sucesso');
+        previewKey.value += 1;
+    } catch (e) {
+        if (previous) builderSections.value = previous;
+        showReorderToast(e.response?.data?.message ?? 'Erro ao salvar a ordem das aulas.', 'error');
+    } finally {
+        reorderSaving.value = false;
+    }
+}
+
+function onSectionsDragStart() {
+    captureDragSnapshot();
+}
+
+function onSectionsDragEnd() {
+    persistSectionsReorder();
+}
+
+function onModulesDragStart() {
+    captureDragSnapshot();
+}
+
+function onModulesDragEnd() {
+    persistModulesReorder();
+}
+
+function onLessonsDragStart() {
+    captureDragSnapshot();
+    lessonDragActive.value = true;
+}
+
+function onLessonsDragEnd() {
+    persistLessonsReorder();
+}
+
 // Módulos: painel direito (aulas do módulo + formulário nova/editar)
 const modulosSelectedModuleId = ref(null);
 const modulosLessonForm = ref(null);
@@ -553,7 +769,7 @@ function pdfLessonFileLabel(type) {
 const modulosSelectedModule = computed(() => {
     const id = modulosSelectedModuleId.value;
     if (!id) return null;
-    for (const s of props.produto.sections ?? []) {
+    for (const s of builderSections.value ?? []) {
         const mod = s.modules?.find((m) => m.id === id);
         if (mod) return mod;
     }
@@ -721,7 +937,7 @@ function toggleModule(moduleId) {
 }
 
 function expandAllModulos() {
-    const sections = props.produto.sections ?? [];
+    const sections = builderSections.value ?? [];
     expandedSections.value = new Set(sections.map((s) => s.id));
     expandedModules.value = new Set(
         sections.flatMap((s) => (s.modules ?? []).map((m) => m.id))
@@ -827,7 +1043,7 @@ async function saveModuleTitle() {
     const id = editingModuleId.value;
     if (!id) return;
     const mod = editingModule.value;
-    const section = props.produto.sections?.find((s) => s.modules?.some((m) => m.id === id));
+    const section = builderSections.value?.find((s) => s.modules?.some((m) => m.id === id));
     const sectionType = section?.section_type ?? 'courses';
     const payload = { title: editingModuleTitle.value };
     if (sectionType === 'courses') {
@@ -863,7 +1079,7 @@ async function setModuleShowTitleOnCover(value) {
     if (!id) return;
     try {
         await axios.put(`${base.value}/modules/${id}`, { show_title_on_cover: value }, { headers: headers() });
-        const mod = props.produto.sections?.flatMap((s) => s.modules ?? []).find((m) => m.id === id);
+        const mod = builderSections.value?.flatMap((s) => s.modules ?? []).find((m) => m.id === id);
         if (mod) mod.show_title_on_cover = value;
     } catch (_) {}
 }
@@ -871,7 +1087,7 @@ async function setModuleShowTitleOnCover(value) {
 const editingModule = computed(() => {
     const id = editingModuleId.value;
     if (!id) return null;
-    for (const s of props.produto.sections ?? []) {
+    for (const s of builderSections.value ?? []) {
         const mod = s.modules?.find((m) => m.id === id);
         if (mod) return mod;
     }
@@ -881,7 +1097,7 @@ const editingModule = computed(() => {
 const editingModuleSection = computed(() => {
     const id = editingModuleId.value;
     if (!id) return null;
-    return props.produto.sections?.find((s) => s.modules?.some((m) => m.id === id)) ?? null;
+    return builderSections.value?.find((s) => s.modules?.some((m) => m.id === id)) ?? null;
 });
 
 const moduleThumbnailUploading = ref(false);
@@ -1235,7 +1451,7 @@ async function deleteSection(sectionId) {
     });
 }
 function openModuleModal(sectionId) {
-    const section = props.produto.sections?.find((s) => s.id === sectionId);
+    const section = builderSections.value?.find((s) => s.id === sectionId);
     moduleModalSectionId.value = sectionId;
     moduleModalSectionType.value = section?.section_type ?? 'courses';
     moduleModalCoverMode.value = section?.cover_mode ?? 'vertical';
@@ -1322,7 +1538,7 @@ async function confirmNewModule() {
                 imported[0] = newModule;
             }
         }
-        const section = props.produto.sections?.find((s) => s.id === sectionId);
+        const section = builderSections.value?.find((s) => s.id === sectionId);
         if (section) {
             if (!section.modules) section.modules = [];
             for (const newModule of imported) {
@@ -1991,17 +2207,44 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                         <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
                             <div class="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pr-2">
                         <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Estrutura do curso</h2>
-                        <p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Seções agrupam módulos. Clique em um módulo (ou em &quot;Aulas&quot;) para ver e editar aulas no painel à direita.</p>
+                        <p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Seções agrupam módulos. Arraste pelo ícone <GripVertical class="inline h-3 w-3" /> para reordenar. Clique em um módulo (ou em &quot;Aulas&quot;) para ver e editar aulas no painel à direita.</p>
                         <div class="mb-3 flex flex-wrap items-center gap-2">
                             <Button size="sm" @click="openSectionModal"><Plus class="mr-1.5 h-4 w-4" /> Nova seção</Button>
                             <span class="text-zinc-400 dark:text-zinc-500">|</span>
                             <button type="button" class="text-xs text-zinc-500 underline hover:text-zinc-700 dark:hover:text-zinc-300" @click="expandAllModulos">Expandir tudo</button>
                             <button type="button" class="text-xs text-zinc-500 underline hover:text-zinc-700 dark:hover:text-zinc-300" @click="collapseAllModulos">Recolher tudo</button>
                         </div>
+                        <div
+                            v-if="reorderToast.message"
+                            class="mb-3 rounded-lg px-3 py-2 text-sm"
+                            :class="reorderToast.type === 'error'
+                                ? 'border border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200'
+                                : 'border border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200'"
+                            role="status"
+                        >
+                            {{ reorderToast.message }}
+                        </div>
                         <div class="space-y-2">
-                            <template v-for="section in produto.sections" :key="section.id">
+                            <draggable
+                                v-model="builderSections"
+                                item-key="id"
+                                handle=".section-drag-handle"
+                                class="space-y-2"
+                                :disabled="reorderSaving"
+                                @start="onSectionsDragStart"
+                                @end="onSectionsDragEnd"
+                            >
+                                <template #item="{ element: section }">
                                 <div class="min-w-0 rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
                                     <div class="flex min-w-0 items-start gap-2 py-2 px-3">
+                                        <button
+                                            type="button"
+                                            class="section-drag-handle mt-0.5 shrink-0 cursor-grab rounded p-0.5 text-zinc-400 hover:text-zinc-600 active:cursor-grabbing dark:hover:text-zinc-300"
+                                            title="Arrastar seção"
+                                            aria-label="Arrastar seção"
+                                        >
+                                            <GripVertical class="h-4 w-4" />
+                                        </button>
                                         <button type="button" class="mt-0.5 shrink-0 rounded p-0.5 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" @click="toggleSection(section.id)" aria-label="Expandir ou recolher">
                                             <ChevronRight v-if="!expandedSections.has(section.id)" class="h-4 w-4" />
                                             <ChevronDown v-else class="h-4 w-4" />
@@ -2066,19 +2309,36 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                     <div v-if="expandedSections.has(section.id)" class="min-w-0 border-t border-zinc-200 bg-zinc-50/50 px-3 pb-3 pt-2 dark:border-zinc-700 dark:bg-zinc-800/30">
                                         <!-- Seção tipo Cursos/Aulas: grid de cards de módulos -->
                                         <template v-if="(section.section_type ?? 'courses') === 'courses'">
-                                            <div class="grid grid-cols-3 gap-2">
+                                            <draggable
+                                                v-model="section.modules"
+                                                :group="moduleDragGroup(section)"
+                                                item-key="id"
+                                                handle=".module-drag-handle"
+                                                class="grid grid-cols-3 gap-2"
+                                                :disabled="reorderSaving"
+                                                @start="onModulesDragStart"
+                                                @end="onModulesDragEnd"
+                                            >
+                                                <template #item="{ element: mod }">
                                                 <div
-                                                    v-for="mod in section.modules"
-                                                    :key="mod.id"
                                                     class="flex flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition dark:border-zinc-700 dark:bg-zinc-800/80"
                                                     :class="{ 'ring-2 ring-sky-500/50 dark:ring-sky-400/40': modulosSelectedModuleId === mod.id }"
                                                 >
+                                                    <div class="flex items-center gap-0.5 border-b border-zinc-100 px-1 py-0.5 dark:border-zinc-700">
+                                                        <button
+                                                            type="button"
+                                                            class="module-drag-handle shrink-0 cursor-grab rounded p-0.5 text-zinc-400 hover:text-zinc-600 active:cursor-grabbing dark:hover:text-zinc-300"
+                                                            title="Arrastar módulo"
+                                                            aria-label="Arrastar módulo"
+                                                            @click.stop
+                                                        >
+                                                            <GripVertical class="h-3.5 w-3.5" />
+                                                        </button>
+                                                        <span class="truncate text-[10px] text-zinc-400 dark:text-zinc-500">Módulo</span>
+                                                    </div>
                                                     <button type="button" class="flex min-w-0 flex-1 flex-col items-stretch text-left" @click="selectModuleForAulas(mod.id)">
-                                                        <div class="h-14 w-full shrink-0 overflow-hidden bg-zinc-200 dark:bg-zinc-700">
-                                                            <img v-if="mod.thumbnail" :src="mod.thumbnail" :alt="mod.title" class="h-full w-full object-cover" />
-                                                            <div v-else class="flex h-full w-full items-center justify-center text-zinc-400 dark:text-zinc-500">
-                                                                <BookOpen class="h-5 w-5" />
-                                                            </div>
+                                                        <div class="h-14 w-full shrink-0">
+                                                            <ModuleCoverImage :mod="mod" :alt="mod.title" container-class="h-14 w-full" />
                                                         </div>
                                                         <div class="min-w-0 flex-1 p-1.5">
                                                             <p class="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">{{ mod.title }}</p>
@@ -2090,8 +2350,24 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                                         <button type="button" class="rounded p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-300" title="Editar módulo" @click.stop="openModuleEdit(mod)"><Pencil class="h-3 w-3" /></button>
                                                         <button type="button" class="rounded p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" title="Remover módulo" @click.stop="deleteModule(mod.id)"><Trash2 class="h-3 w-3" /></button>
                                                     </div>
+                                                    <draggable
+                                                        v-if="!isModuleLessonDragDisabled(mod)"
+                                                        v-model="mod.lessons"
+                                                        :group="lessonDragGroupForModule(mod)"
+                                                        item-key="id"
+                                                        class="min-h-[6px] border-t border-dashed border-transparent transition-colors"
+                                                        :class="lessonDragActive ? 'border-sky-300 bg-sky-50/50 dark:border-sky-600 dark:bg-sky-950/20' : ''"
+                                                        :disabled="reorderSaving"
+                                                        @start="onLessonsDragStart"
+                                                        @end="onLessonsDragEnd"
+                                                    >
+                                                        <template #item="{ element: lesson }">
+                                                            <div class="sr-only">{{ lesson.title }}</div>
+                                                        </template>
+                                                    </draggable>
                                                 </div>
-                                            </div>
+                                                </template>
+                                            </draggable>
                                             <!-- Edição do módulo (quando editingModuleId está neste módulo da seção) -->
                                             <template v-for="mod in section.modules" :key="'edit-' + mod.id">
                                                 <div v-if="editingModuleId === mod.id" class="mt-3 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-600 dark:bg-zinc-800/50">
@@ -2136,9 +2412,13 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                                         </div>
                                                     </div>
                                                     <div v-if="editingModule?.thumbnail" class="mb-3 flex items-center gap-3">
-                                                        <div :class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'" class="overflow-hidden rounded-lg shadow-sm">
-                                                            <img :src="editingModule.thumbnail" alt="Capa" class="h-full w-full object-cover" />
-                                                        </div>
+                                                        <ModuleCoverImage
+                                                            :mod="editingModule"
+                                                            alt="Capa"
+                                                            :aspect-class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'"
+                                                            container-class="rounded-lg shadow-sm"
+                                                            placeholder-icon-class="h-6 w-6"
+                                                        />
                                                         <div class="flex flex-wrap gap-2">
                                                             <Button type="button" size="sm" variant="outline" class="!py-1 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">Trocar imagem</Button>
                                                             <Button type="button" size="sm" variant="ghost" class="!py-1 !text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" :disabled="moduleThumbnailUploading" @click="removeModuleThumbnail">Remover</Button>
@@ -2161,9 +2441,28 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                         </template>
                                         <!-- Seção tipo Outros produtos -->
                                         <template v-else-if="(section.section_type ?? 'courses') === 'products'">
-                                            <template v-for="mod in section.modules" :key="mod.id">
+                                            <draggable
+                                                v-model="section.modules"
+                                                :group="moduleDragGroup(section)"
+                                                item-key="id"
+                                                handle=".module-drag-handle"
+                                                class="space-y-2"
+                                                :disabled="reorderSaving"
+                                                @start="onModulesDragStart"
+                                                @end="onModulesDragEnd"
+                                            >
+                                                <template #item="{ element: mod }">
                                                 <div class="ml-2 mt-2 min-w-0 rounded-md border border-zinc-200 bg-white/80 dark:border-zinc-600 dark:bg-zinc-800/50">
                                                     <div class="flex min-w-0 flex-wrap items-center gap-2 py-1.5 px-2">
+                                                        <button
+                                                            type="button"
+                                                            class="module-drag-handle shrink-0 cursor-grab rounded p-0.5 text-zinc-400 hover:text-zinc-600 active:cursor-grabbing dark:hover:text-zinc-300"
+                                                            title="Arrastar módulo"
+                                                            aria-label="Arrastar módulo"
+                                                            @click.stop
+                                                        >
+                                                            <GripVertical class="h-3.5 w-3.5" />
+                                                        </button>
                                                         <span class="flex shrink-0 items-center gap-1 rounded bg-zinc-100/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"><ShoppingBag class="h-3 w-3" /> Produto</span>
                                                         <template v-if="editingModuleId === mod.id">
                                                             <div class="flex min-w-0 flex-1 flex-col gap-2">
@@ -2204,9 +2503,13 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                                             />
                                                         </div>
                                                         <div v-if="editingModule?.thumbnail" class="flex items-center gap-3">
-                                                            <div :class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'" class="overflow-hidden rounded-lg shadow-sm">
-                                                                <img :src="editingModule.thumbnail" alt="Capa" class="h-full w-full object-cover" />
-                                                            </div>
+                                                            <ModuleCoverImage
+                                                                :mod="editingModule"
+                                                                alt="Capa"
+                                                                :aspect-class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'"
+                                                                container-class="rounded-lg shadow-sm"
+                                                                placeholder-icon-class="h-6 w-6"
+                                                            />
                                                             <div class="flex flex-wrap gap-2">
                                                                 <Button type="button" size="sm" variant="outline" class="!py-1 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">Trocar imagem</Button>
                                                                 <Button type="button" size="sm" variant="ghost" class="!py-1 !text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" :disabled="moduleThumbnailUploading" @click="removeModuleThumbnail">Remover</Button>
@@ -2222,13 +2525,33 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                                         </template>
                                                     </div>
                                                 </div>
-                                            </template>
+                                                </template>
+                                            </draggable>
                                         </template>
                                         <!-- Seção tipo Links externos -->
                                         <template v-else>
-                                            <template v-for="mod in section.modules" :key="mod.id">
+                                            <draggable
+                                                v-model="section.modules"
+                                                :group="moduleDragGroup(section)"
+                                                item-key="id"
+                                                handle=".module-drag-handle"
+                                                class="space-y-2"
+                                                :disabled="reorderSaving"
+                                                @start="onModulesDragStart"
+                                                @end="onModulesDragEnd"
+                                            >
+                                                <template #item="{ element: mod }">
                                                 <div class="ml-2 mt-2 min-w-0 rounded-md border border-zinc-200 bg-white/80 dark:border-zinc-600 dark:bg-zinc-800/50">
                                                     <div class="flex min-w-0 flex-wrap items-center gap-2 py-1.5 px-2">
+                                                        <button
+                                                            type="button"
+                                                            class="module-drag-handle shrink-0 cursor-grab rounded p-0.5 text-zinc-400 hover:text-zinc-600 active:cursor-grabbing dark:hover:text-zinc-300"
+                                                            title="Arrastar módulo"
+                                                            aria-label="Arrastar módulo"
+                                                            @click.stop
+                                                        >
+                                                            <GripVertical class="h-3.5 w-3.5" />
+                                                        </button>
                                                         <span class="flex shrink-0 items-center gap-1 rounded bg-zinc-100/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"><ExternalLink class="h-3 w-3" /> Link</span>
                                                         <template v-if="editingModuleId === mod.id">
                                                             <div class="flex min-w-0 flex-1 flex-col gap-2">
@@ -2261,9 +2584,13 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                                             />
                                                         </div>
                                                         <div v-if="editingModule?.thumbnail" class="flex items-center gap-3">
-                                                            <div :class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'" class="overflow-hidden rounded-lg shadow-sm">
-                                                                <img :src="editingModule.thumbnail" alt="Capa" class="h-full w-full object-cover" />
-                                                            </div>
+                                                            <ModuleCoverImage
+                                                                :mod="editingModule"
+                                                                alt="Capa"
+                                                                :aspect-class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'"
+                                                                container-class="rounded-lg shadow-sm"
+                                                                placeholder-icon-class="h-6 w-6"
+                                                            />
                                                             <div class="flex flex-wrap gap-2">
                                                                 <Button type="button" size="sm" variant="outline" class="!py-1 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">Trocar imagem</Button>
                                                                 <Button type="button" size="sm" variant="ghost" class="!py-1 !text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" :disabled="moduleThumbnailUploading" @click="removeModuleThumbnail">Remover</Button>
@@ -2279,13 +2606,15 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                                         </template>
                                                     </div>
                                                 </div>
-                                            </template>
+                                                </template>
+                                            </draggable>
                                         </template>
                                         <p v-if="!section.modules?.length" class="ml-4 mt-2 text-xs text-zinc-400 dark:text-zinc-500">Nenhum módulo. Clique em + Módulo.</p>
                                     </div>
                                 </div>
-                            </template>
-                            <p v-if="!produto.sections?.length" class="rounded-lg border border-dashed border-zinc-300 py-6 text-center text-sm text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">Nenhuma seção. Clique em &quot;Nova seção&quot; para começar.</p>
+                                </template>
+                            </draggable>
+                            <p v-if="!builderSections?.length" class="rounded-lg border border-dashed border-zinc-300 py-6 text-center text-sm text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">Nenhuma seção. Clique em &quot;Nova seção&quot; para começar.</p>
                         </div>
                             </div>
 
@@ -2310,7 +2639,46 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                     <p v-if="modulosSelectedModule" class="mb-3 truncate text-xs text-zinc-500 dark:text-zinc-400">{{ modulosSelectedModule.title }}</p>
 
                                     <template v-if="!modulosLessonForm">
-                                        <ul class="space-y-1">
+                                        <draggable
+                                            v-if="modulosSelectedModule && !isModuleLessonDragDisabled(modulosSelectedModule)"
+                                            v-model="modulosSelectedModule.lessons"
+                                            :group="lessonDragGroupForModule(modulosSelectedModule)"
+                                            item-key="id"
+                                            handle=".lesson-drag-handle"
+                                            tag="ul"
+                                            class="space-y-1"
+                                            :disabled="reorderSaving"
+                                            @start="onLessonsDragStart"
+                                            @end="onLessonsDragEnd"
+                                        >
+                                            <template #item="{ element: lesson }">
+                                            <li
+                                                class="flex cursor-pointer items-center justify-between gap-2 rounded-lg py-2 px-2 text-sm transition hover:bg-zinc-200/80 dark:hover:bg-zinc-700/50"
+                                                @click="openModulosLessonForm(lesson)"
+                                            >
+                                                <span class="flex min-w-0 flex-1 items-center gap-2 truncate">
+                                                    <button
+                                                        type="button"
+                                                        class="lesson-drag-handle shrink-0 cursor-grab rounded p-0.5 text-zinc-400 hover:text-zinc-600 active:cursor-grabbing dark:hover:text-zinc-300"
+                                                        title="Arrastar aula"
+                                                        aria-label="Arrastar aula"
+                                                        @click.stop
+                                                    >
+                                                        <GripVertical class="h-3.5 w-3.5" />
+                                                    </button>
+                                                    <FileVideo v-if="lesson.type === 'video'" class="h-4 w-4 shrink-0 text-zinc-500" />
+                                                    <Link v-else-if="lesson.type === 'link'" class="h-4 w-4 shrink-0 text-zinc-500" />
+                                                    <Presentation v-else-if="lesson.type === 'pdf_presentation'" class="h-4 w-4 shrink-0 text-zinc-500" />
+                                                    <BookOpen v-else-if="lesson.type === 'pdf_reader'" class="h-4 w-4 shrink-0 text-zinc-500" />
+                                                    <FileText v-else-if="lesson.type === 'pdf'" class="h-4 w-4 shrink-0 text-zinc-500" />
+                                                    <FileText v-else class="h-4 w-4 shrink-0 text-zinc-500" />
+                                                    <span class="truncate text-zinc-700 dark:text-zinc-300">{{ lesson.title || 'Sem título' }}</span>
+                                                </span>
+                                                <button type="button" class="shrink-0 rounded p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" title="Remover aula" @click.stop="deleteLesson(lesson.id)"><Trash2 class="h-3 w-3" /></button>
+                                            </li>
+                                            </template>
+                                        </draggable>
+                                        <ul v-else-if="modulosSelectedModule" class="space-y-1">
                                             <li
                                                 v-for="lesson in (modulosSelectedModule?.lessons ?? [])"
                                                 :key="lesson.id"
@@ -2903,6 +3271,45 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                         <div class="mx-auto max-w-3xl space-y-6">
                             <!-- Formulário em cards -->
                             <div class="min-w-0 flex-1 space-y-6">
+                                <!-- Card: HUB principal -->
+                                <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/50">
+                                    <h3 class="mb-2 flex items-center gap-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                                        <Layers class="h-4 w-4 text-sky-500" />
+                                        Área principal (HUB)
+                                    </h3>
+                                    <p class="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
+                                        Quando ativo, esta área exibe automaticamente &quot;Meus Cursos&quot; para o aluno e oculta da vitrine os cursos já liberados. Os cursos continuam abrindo nas URLs atuais de cada produto.
+                                    </p>
+                                    <div class="flex flex-wrap items-center gap-3">
+                                        <Toggle
+                                            :model-value="isMemberHub"
+                                            label="Esta é a área HUB do tenant"
+                                            class="!mb-0"
+                                            :disabled="hubModeSaving"
+                                            @update:model-value="saveHubMode"
+                                        />
+                                    </div>
+                                    <div v-if="isMemberHub" class="mt-4 grid gap-3 sm:grid-cols-2">
+                                        <div>
+                                            <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Título da seção Meus Cursos</label>
+                                            <input v-model="configForm.member_area_config.my_courses.title" type="text" :class="inputClass" class="w-full" placeholder="Meus Cursos" />
+                                        </div>
+                                        <div>
+                                            <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Layout dos cards</label>
+                                            <select v-model="configForm.member_area_config.my_courses.cover_mode" :class="inputClass" class="w-full">
+                                                <option value="vertical">Vertical</option>
+                                                <option value="horizontal">Horizontal (banner)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <p
+                                        v-if="hubModeMessage"
+                                        class="mt-3 rounded-lg px-3 py-2 text-xs"
+                                        :class="hubModeMessage.success ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200' : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200'"
+                                    >
+                                        {{ hubModeMessage.message }}
+                                    </p>
+                                </div>
                                 <!-- Card: URL da área -->
                                 <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/50">
                                     <h3 class="mb-4 flex items-center gap-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
@@ -3076,7 +3483,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                         :mode="previewMode"
                         :config="configForm.member_area_config"
                         :product-name="produto.name"
-                        :sections="produto.sections ?? []"
+                        :sections="builderSections"
                         :internal-products="produto.internal_products ?? []"
                         :progress-percent="0"
                         :continue-watching="null"

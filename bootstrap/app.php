@@ -5,6 +5,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use App\Support\GuestLoginRedirect;
 use Illuminate\Http\Request;
 use Illuminate\Session\TokenMismatchException;
 use Illuminate\Support\Facades\Artisan;
@@ -23,8 +24,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->trustProxies(at: '*', headers: Request::HEADER_X_FORWARDED_FOR | Request::HEADER_X_FORWARDED_HOST | Request::HEADER_X_FORWARDED_PORT | Request::HEADER_X_FORWARDED_PROTO | Request::HEADER_X_FORWARDED_PREFIX | Request::HEADER_X_FORWARDED_AWS_ELB);
 
-        // Redirect de convidados para /login (evita RouteNotFoundException quando route('login') não está disponível, ex.: cache de rotas)
-        $middleware->redirectGuestsTo(fn () => url('/login'));
+        // Redirect de convidados: /login (área de membros na raiz) ou /admin/login (painel quando há HUB)
+        $middleware->redirectGuestsTo(fn (Request $request) => GuestLoginRedirect::url($request));
 
         // Webhooks recebem POST de gateways externos sem CSRF token
         $middleware->validateCsrfTokens(except: [
@@ -62,12 +63,14 @@ return Application::configure(basePath: dirname(__DIR__))
             'partner.panel' => \App\Http\Middleware\EnsurePartnerPanel::class,
             'storefront.tenant' => \App\Http\Middleware\ResolveStorefrontTenant::class,
             'plugin.api.signature' => \App\Http\Middleware\VerifyPluginApiSignature::class,
+            'enrollment.webhook' => \App\Http\Middleware\AuthenticateEnrollmentWebhook::class,
+            'enrollment.webhook.cors' => \App\Http\Middleware\EnrollmentWebhookCors::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (TokenMismatchException $e, Request $request) {
             if ($request->header('X-Inertia')) {
-                return redirect()->to('/login')->with('error', 'Sessão expirada. Tente fazer login novamente.');
+                return redirect()->to(GuestLoginRedirect::url($request))->with('error', 'Sessão expirada. Tente fazer login novamente.');
             }
 
             return null;

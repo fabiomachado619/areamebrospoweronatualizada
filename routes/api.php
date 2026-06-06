@@ -1,6 +1,5 @@
 <?php
 
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -30,3 +29,20 @@ Route::middleware(['api.application', 'throttle:api'])->prefix('v1')->group(func
     Route::get('payments/{order}', [\App\Http\Controllers\Api\V1\PaymentStatusController::class, 'show'])
         ->name('api.v1.payments.show');
 });
+
+/*
+|--------------------------------------------------------------------------
+| Enrollment webhook (n8n)
+|--------------------------------------------------------------------------
+| Principal: URL única POST /api/webhooks/enrollment/{webhook_key}
+| Legado: POST /api/webhooks/enrollment com Bearer token
+|--------------------------------------------------------------------------
+*/
+Route::match(['post', 'options'], 'webhooks/enrollment/{webhook_key}', [\App\Http\Controllers\Api\EnrollmentWebhookController::class, 'byKey'])
+    ->where('webhook_key', '[a-zA-Z0-9]{16,64}')
+    ->middleware(['enrollment.webhook.cors', 'throttle:api'])
+    ->name('api.webhooks.enrollment.by-key');
+
+Route::match(['post', 'options'], 'webhooks/enrollment', [\App\Http\Controllers\Api\EnrollmentWebhookController::class, '__invoke'])
+    ->middleware(['enrollment.webhook.cors', 'enrollment.webhook', 'throttle:api'])
+    ->name('api.webhooks.enrollment');

@@ -341,7 +341,7 @@ class SpacepagDriver implements GatewayDriver
             ->timeout($this->timeoutSeconds($credentials))
             ->withOptions($options)
             ->withHeaders(array_merge($authHeaders, [
-                'User-Agent' => config('app.name', 'Getfy'),
+                'User-Agent' => config('app.name', 'Power On'),
             ]));
     }
 

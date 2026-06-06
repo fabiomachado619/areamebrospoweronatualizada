@@ -188,6 +188,52 @@ class StorageService
     }
 
     /**
+     * Normaliza valor persistido (URL absoluta, /storage/... ou path relativo) para path no disco.
+     */
+    public function normalizeStoredPath(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        $value = trim($value);
+        $normalizer = app(StorageUrlNormalizer::class);
+        if ($normalizer->isLocalStorageUrl($value)
+            || str_starts_with($value, 'http://')
+            || str_starts_with($value, 'https://')) {
+            $value = $normalizer->toRelativePath($value);
+        }
+        if (str_starts_with($value, '/storage/')) {
+            $value = ltrim(substr($value, strlen('/storage/')), '/');
+        }
+
+        return $value !== '' ? $value : null;
+    }
+
+    /**
+     * Resolve path/URL persistido para URL pública utilizável no frontend.
+     */
+    public function resolvePublicUrl(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        $value = trim($value);
+        if (str_starts_with($value, 'http://') || str_starts_with($value, 'https://')) {
+            return $value;
+        }
+        if (str_starts_with($value, '/storage/')) {
+            return $value;
+        }
+
+        $path = $this->normalizeStoredPath($value) ?? $value;
+        $url = $this->url($path);
+
+        return $url !== '' ? $url : null;
+    }
+
+    /**
      * Absolute URL for e-mails, Open Graph, APIs externas, etc.
      */
     public function absoluteUrl(string $path): string

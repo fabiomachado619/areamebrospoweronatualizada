@@ -52,6 +52,50 @@ class TeamAccessService
     }
 
     /**
+     * Primeira rota do painel que o usuário pode acessar (equipe sem dashboard.view, etc.).
+     */
+    public function defaultPanelUrl(User $user): string
+    {
+        if ($user->isAdmin() || $user->isInfoprodutor()) {
+            return '/dashboard';
+        }
+
+        if (app(PartnerAccessService::class)->usesPartnerPanel($user)) {
+            return '/parceiro';
+        }
+
+        if ($user->isTeam()) {
+            foreach ($this->defaultPanelRoutes() as $permission => $url) {
+                if ($this->can($user, $permission)) {
+                    return $url;
+                }
+            }
+        }
+
+        return '/dashboard';
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function defaultPanelRoutes(): array
+    {
+        return [
+            'dashboard.view' => '/dashboard',
+            'vendas.view' => '/vendas',
+            'produtos.view' => '/produtos',
+            'relatorios.view' => '/relatorios',
+            'reembolsos.view' => '/reembolsos',
+            'financeiro.view' => '/financeiro',
+            'integracoes.view' => '/integracoes',
+            'email_marketing.view' => '/email-marketing',
+            'api_pagamentos.view' => '/aplicacoes-api',
+            'configuracoes.view' => '/configuracoes',
+            'equipe.manage' => '/usuarios/equipe',
+        ];
+    }
+
+    /**
      * @return list<string>
      */
     public function allowedProductIdsFor(User $user): array

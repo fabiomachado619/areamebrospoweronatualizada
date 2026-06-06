@@ -77,7 +77,7 @@ function submit() {
             </form>
             <p class="text-center text-sm text-zinc-600 dark:text-zinc-400">
                 Já tem conta?
-                <a href="/login" class="font-medium text-zinc-900 dark:text-white hover:underline">Entrar</a>
+                <a href="/admin/login" class="font-medium text-zinc-900 dark:text-white hover:underline">Entrar</a>
             </p>
         </div>
     </div>

@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { MessageSquare } from 'lucide-vue-next';
 import { getCommunityPageIconComponent } from '@/utils/communityPageIcons';
+import ModuleCoverImage from '@/components/member-builder/ModuleCoverImage.vue';
 
 const props = defineProps({
     mode: { type: String, default: 'area' },
@@ -155,8 +156,7 @@ const certOverlayOpacity = computed(() => {
                                         class="flex w-64 shrink-0 flex-col rounded-xl overflow-hidden bg-zinc-800/50 transition hover:bg-zinc-800"
                                     >
                                         <div :class="[(section.cover_mode === 'horizontal' ? 'aspect-video' : 'aspect-[2/3]'), 'relative flex w-full items-center justify-center overflow-hidden bg-zinc-700']">
-                                            <img v-if="mod.thumbnail" :src="mod.thumbnail" :alt="mod.title" class="absolute inset-0 h-full w-full object-cover" />
-                                            <svg v-else class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                            <ModuleCoverImage :mod="mod" :alt="mod.title" absolute placeholder-icon-class="h-12 w-12" />
                                             <div v-if="mod.show_title_on_cover !== false" class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8">
                                                 <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
                                             </div>

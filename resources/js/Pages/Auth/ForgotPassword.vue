@@ -7,8 +7,8 @@ const page = usePage();
 const status = computed(() => page.props.flash?.status ?? null);
 const branding = computed(() => page.props.public_branding ?? {});
 const primary = computed(() => branding.value.theme_primary || '#c8fa64');
-const appName = computed(() => branding.value.app_name || 'Getfy');
-const logoLight = computed(() => branding.value.app_logo_icon || 'https://cdn.getfy.cloud/collapsed-logo.png');
+const appName = computed(() => branding.value.app_name || 'Power On');
+const logoLight = computed(() => branding.value.app_logo_icon || '/brand/logo-icon.png');
 const logoDark = computed(() => branding.value.app_logo_icon_dark || logoLight.value);
 
 const form = useForm({
@@ -61,7 +61,7 @@ function submit() {
 
             <p class="text-center">
                 <Link
-                    href="/login"
+                    href="/admin/login"
                     class="wl-link text-sm font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-zinc-950 rounded"
                 >
                     Voltar ao login

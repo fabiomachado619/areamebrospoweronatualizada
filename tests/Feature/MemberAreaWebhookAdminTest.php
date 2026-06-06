@@ -1,0 +1,401 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Http\Middleware\EnsureDockerSetup;
+use App\Http\Middleware\EnsureInstalled;
+use App\Models\EnrollmentWebhookCredential;
+use App\Models\EnrollmentWebhookLog;
+use App\Models\Product;
+use App\Models\User;
+use App\Services\EnrollmentWebhookAdminService;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Support\Facades\Mail;
+use Tests\TestCase;
+
+class MemberAreaWebhookAdminTest extends TestCase
+{
+    private function withoutInstallMiddleware(): void
+    {
+        $this->withoutMiddleware([
+            EnsureInstalled::class,
+            EnsureDockerSetup::class,
+            ValidateCsrfToken::class,
+        ]);
+    }
+
+    private function infoprodutor(int $tenantId = 1): User
+    {
+        return User::factory()->create([
+            'role' => User::ROLE_INFOPRODUTOR,
+            'tenant_id' => $tenantId,
+        ]);
+    }
+
+    private function createCourse(int $tenantId = 1): Product
+    {
+        return $this->createTestProduct([
+            'type' => Product::TYPE_AREA_MEMBROS,
+            'tenant_id' => $tenantId,
+            'checkout_slug' => 'cur'.substr(uniqid('', true), -8),
+            'name' => 'Curso Teste',
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function postWebhookByUrl(string $webhookKey, array $payload = []): \Illuminate\Testing\TestResponse
+    {
+        return $this->postJson('/api/webhooks/enrollment/'.$webhookKey, array_merge([
+            'name' => 'Nome do Aluno',
+            'email' => 'aluno@example.com',
+            'platform' => 'kiwify',
+            'event' => 'purchase_approved',
+            'transaction_id' => 'tx-'.uniqid(),
+            'status' => 'approved',
+            'send_access_email' => true,
+        ], $payload));
+    }
+
+    public function test_admin_can_create_webhook_with_unique_url(): void
+    {
+        $this->withoutInstallMiddleware();
+
+        $owner = $this->infoprodutor();
+        $course = $this->createCourse();
+
+        $response = $this->actingAs($owner)->postJson('/area-membros-admin/webhooks', [
+            'name' => 'Kiwify - Curso UPA',
+            'product_id' => $course->id,
+            'platform' => 'kiwify',
+            'external_product_id' => 'ext-123',
+            'is_active' => true,
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonStructure(['webhook' => ['id', 'name', 'product_id', 'webhook_key', 'webhook_url']])
+            ->assertJsonMissing(['plain_token']);
+
+        $webhookUrl = $response->json('webhook.webhook_url');
+        $this->assertStringContainsString('/api/webhooks/enrollment/', $webhookUrl);
+
+        $this->assertDatabaseHas('enrollment_webhook_credentials', [
+            'tenant_id' => 1,
+            'name' => 'Kiwify - Curso UPA',
+            'product_id' => $course->id,
+            'platform' => 'kiwify',
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_webhooks_tab_lists_webhooks_with_copy_ready_url(): void
+    {
+        $this->withoutInstallMiddleware();
+
+        $owner = $this->infoprodutor();
+        $course = $this->createCourse();
+
+        app(EnrollmentWebhookAdminService::class)->createWebhook(1, [
+            'name' => 'Webhook Listado',
+            'product_id' => $course->id,
+            'platform' => 'hotmart',
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($owner)->get('/area-membros-admin?tab=webhooks');
+
+        $response->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('tab', 'webhooks')
+                ->has('webhooks', 1)
+                ->where('webhooks.0.name', 'Webhook Listado')
+                ->has('webhooks.0.webhook_url')
+                ->has('webhook_url_pattern')
+            );
+    }
+
+    public function test_webhook_by_unique_url_grants_access(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Kiwify UPA',
+            productId: $course->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postWebhookByUrl($issued['model']->webhook_key, [
+            'name' => 'Aluno Webhook',
+            'email' => 'webhook-url@example.com',
+            'transaction_id' => 'tx-url-'.uniqid(),
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => 'enrolled',
+                'course_id' => (string) $course->id,
+            ]);
+
+        $user = User::query()->where('email', 'webhook-url@example.com')->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
+    }
+
+    public function test_webhook_enrolls_linked_course_without_course_id_in_payload(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Kiwify UPA',
+            productId: $course->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postWebhookByUrl($issued['model']->webhook_key, [
+            'name' => 'Aluno Webhook',
+            'email' => 'webhook-linked@example.com',
+            'transaction_id' => 'tx-linked-'.uniqid(),
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => 'enrolled',
+                'course_id' => (string) $course->id,
+            ]);
+
+        $user = User::query()->where('email', 'webhook-linked@example.com')->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
+    }
+
+    public function test_inactive_webhook_is_blocked(): void
+    {
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Inativo',
+            productId: $course->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: false,
+        );
+
+        $response = $this->postWebhookByUrl($issued['model']->webhook_key, [
+            'email' => 'blocked@example.com',
+            'name' => 'Blocked',
+            'transaction_id' => 'tx-inactive-'.uniqid(),
+        ]);
+
+        $response->assertForbidden()
+            ->assertJson(['success' => false, 'message' => 'Webhook inativo.']);
+    }
+
+    public function test_unknown_webhook_key_is_blocked(): void
+    {
+        $response = $this->postWebhookByUrl('chaveinexistente1234567890', [
+            'email' => 'unknown@example.com',
+            'name' => 'Unknown',
+            'transaction_id' => 'tx-unknown-'.uniqid(),
+        ]);
+
+        $response->assertNotFound()
+            ->assertJson(['success' => false, 'message' => 'Webhook não encontrado.']);
+    }
+
+    public function test_course_from_other_tenant_is_blocked_via_unique_url(): void
+    {
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Tenant 1',
+            productId: $course->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $otherCourse = $this->createTestProduct([
+            'type' => Product::TYPE_AREA_MEMBROS,
+            'tenant_id' => 2,
+            'checkout_slug' => 'outro-tenant-'.uniqid(),
+        ]);
+
+        $response = $this->postWebhookByUrl($issued['model']->webhook_key, [
+            'email' => 'blocked@example.com',
+            'name' => 'Blocked',
+            'course_id' => $otherCourse->id,
+            'transaction_id' => 'tx-block-'.uniqid(),
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson(['success' => false]);
+
+        $this->assertStringContainsString('tenant', strtolower($response->json('message')));
+    }
+
+    public function test_other_tenant_cannot_update_webhook(): void
+    {
+        $this->withoutInstallMiddleware();
+
+        $course = $this->createCourse(1);
+        $created = app(EnrollmentWebhookAdminService::class)->createWebhook(1, [
+            'name' => 'Tenant 1',
+            'product_id' => $course->id,
+            'platform' => 'kiwify',
+            'is_active' => true,
+        ]);
+
+        $otherOwner = $this->infoprodutor(2);
+        $otherCourse = $this->createCourse(2);
+
+        $this->actingAs($otherOwner)->putJson('/area-membros-admin/webhooks/'.$created['webhook']['id'], [
+            'name' => 'Hack',
+            'product_id' => $otherCourse->id,
+            'platform' => 'kiwify',
+            'is_active' => true,
+        ])->assertNotFound();
+    }
+
+    public function test_regenerate_url_invalidates_previous(): void
+    {
+        $this->withoutInstallMiddleware();
+
+        $owner = $this->infoprodutor();
+        $course = $this->createCourse();
+        $created = app(EnrollmentWebhookAdminService::class)->createWebhook(1, [
+            'name' => 'Rotate',
+            'product_id' => $course->id,
+            'platform' => 'kiwify',
+            'is_active' => true,
+        ]);
+
+        $oldKey = EnrollmentWebhookCredential::query()->find($created['webhook']['id'])->webhook_key;
+
+        $regen = $this->actingAs($owner)->postJson('/area-membros-admin/webhooks/'.$created['webhook']['id'].'/regenerate-url');
+        $regen->assertOk()
+            ->assertJsonStructure(['webhook' => ['webhook_url', 'webhook_key']])
+            ->assertJsonMissing(['plain_token']);
+
+        $newKey = $regen->json('webhook.webhook_key');
+        $this->assertNotSame($oldKey, $newKey);
+
+        $this->postWebhookByUrl($oldKey, [
+            'email' => 'old-url@example.com',
+            'name' => 'Old',
+            'transaction_id' => 'tx-old-'.uniqid(),
+        ])->assertNotFound();
+
+        $this->postWebhookByUrl($newKey, [
+            'email' => 'new-url@example.com',
+            'name' => 'New',
+            'transaction_id' => 'tx-new-'.uniqid(),
+        ])->assertOk();
+    }
+
+    public function test_logs_appear_in_admin_tab(): void
+    {
+        $this->withoutInstallMiddleware();
+
+        $owner = $this->infoprodutor();
+        $course = $this->createCourse();
+        $created = app(EnrollmentWebhookAdminService::class)->createWebhook(1, [
+            'name' => 'Com Logs',
+            'product_id' => $course->id,
+            'platform' => 'kiwify',
+            'is_active' => true,
+        ]);
+
+        EnrollmentWebhookLog::create([
+            'tenant_id' => 1,
+            'enrollment_webhook_id' => $created['webhook']['id'],
+            'platform' => 'kiwify',
+            'event' => 'purchase_approved',
+            'email' => 'log@test.local',
+            'course_id' => $course->id,
+            'action' => EnrollmentWebhookLog::ACTION_ENROLLED,
+            'email_sent' => true,
+            'processed_at' => now(),
+            'payload' => ['email' => 'log@test.local'],
+        ]);
+
+        $response = $this->actingAs($owner)->get('/area-membros-admin?tab=webhooks');
+
+        $response->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('webhook_logs', 1)
+                ->where('webhook_logs.0.email', 'log@test.local')
+                ->where('webhook_logs.0.action', 'enrolled')
+            );
+    }
+
+    public function test_webhook_request_saves_log(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Com Log',
+            productId: $course->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $this->postWebhookByUrl($issued['model']->webhook_key, [
+            'email' => 'log-save@example.com',
+            'name' => 'Log Save',
+            'transaction_id' => 'tx-log-'.uniqid(),
+        ])->assertOk();
+
+        $this->assertDatabaseHas('enrollment_webhook_logs', [
+            'enrollment_webhook_id' => $issued['model']->id,
+            'email' => 'log-save@example.com',
+            'action' => EnrollmentWebhookLog::ACTION_ENROLLED,
+        ]);
+    }
+
+    public function test_duplicate_payload_does_not_resend_email_with_unique_url(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Dup',
+            productId: $course->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $payload = [
+            'name' => 'Dup User',
+            'email' => 'dup-webhook@example.com',
+            'platform' => 'kiwify',
+            'event' => 'purchase_approved',
+            'transaction_id' => 'tx-dup-wh-'.uniqid(),
+        ];
+
+        $this->postWebhookByUrl($issued['model']->webhook_key, $payload)->assertOk();
+
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+
+        $this->postWebhookByUrl($issued['model']->webhook_key, $payload)
+            ->assertOk()
+            ->assertJson(['duplicate' => true, 'email_sent' => false]);
+
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+    }
+}

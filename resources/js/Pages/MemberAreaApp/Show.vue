@@ -16,6 +16,7 @@ import Button from '@/components/ui/Button.vue';
 defineOptions({ layout: MemberAreaAppLayout });
 
 const carouselRefs = ref({});
+const brokenCoverIds = ref(new Set());
 /** Só true quando o carrossel tem conteúdo para rolar (scrollWidth > clientWidth). Só atualizamos quando muda para evitar loop de re-render. */
 const carouselHasOverflow = ref({});
 
@@ -78,6 +79,51 @@ function productSectionNeedsCheckout(mod) {
 
 function productSectionUnlocked(mod) {
     return !productSectionNeedsCheckout(mod);
+}
+
+function productSectionClickHref(mod) {
+    if (productSectionNeedsCheckout(mod)) {
+        if (mod.external_url) {
+            return mod.external_url;
+        }
+        return mod.related_product?.checkout_url || (mod.related_product?.checkout_slug ? `/c/${mod.related_product.checkout_slug}` : null);
+    }
+    if (mod.related_product?.type === 'link') {
+        return mod.related_product?.deliverable_link || `${props.base_url}/products/${mod.related_product?.id}/deliverable`;
+    }
+    if (mod.embed) {
+        return `${props.base_url}/modulo/${mod.id}`;
+    }
+    return `${props.base_url}/products/${mod.related_product?.id}/open`;
+}
+
+function productSectionOpensNewTab(mod) {
+    if (productSectionNeedsCheckout(mod)) {
+        return true;
+    }
+    return mod.related_product?.type === 'link';
+}
+
+function productCardCover(mod) {
+    if (brokenCoverIds.value.has(mod.id)) {
+        return null;
+    }
+    return mod.thumbnail_url || mod.thumbnail || mod.related_product?.image_url || null;
+}
+
+function onCatalogCoverError(modId) {
+    brokenCoverIds.value = new Set([...brokenCoverIds.value, modId]);
+}
+
+function catalogCoverPlaceholderClass() {
+    return 'absolute inset-0 flex items-center justify-center bg-gradient-to-br from-zinc-700 via-zinc-800 to-zinc-900';
+}
+
+function handleProductCardClick(mod, event) {
+    if (productSectionNeedsCheckout(mod) && !productSectionClickHref(mod)) {
+        event.preventDefault();
+        window.alert('Este curso ainda não está disponível para compra. Entre em contato com o produtor.');
+    }
 }
 
 </script>
@@ -206,8 +252,16 @@ function productSectionUnlocked(mod) {
                             class="flex w-64 shrink-0 flex-col rounded-xl overflow-hidden bg-zinc-800/50 text-left transition hover:bg-zinc-800"
                         >
                             <div :class="[(section.cover_mode === 'horizontal' ? 'aspect-video' : 'aspect-[2/3]'), 'relative w-full bg-zinc-700 flex items-center justify-center overflow-hidden']">
-                                <img v-if="mod.thumbnail" :src="mod.thumbnail" :alt="mod.title" class="absolute inset-0 h-full w-full object-cover" />
-                                <svg v-else class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                <img
+                                    v-if="productCardCover(mod)"
+                                    :src="productCardCover(mod)"
+                                    :alt="mod.title"
+                                    class="absolute inset-0 h-full w-full object-cover"
+                                    @error="onCatalogCoverError(mod.id)"
+                                />
+                                <div v-else :class="catalogCoverPlaceholderClass()">
+                                    <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                </div>
                                 <div v-if="mod.show_title_on_cover !== false" class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8">
                                     <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
                                 </div>
@@ -218,8 +272,16 @@ function productSectionUnlocked(mod) {
                             class="flex w-64 shrink-0 cursor-not-allowed flex-col rounded-xl overflow-hidden bg-zinc-800/30 text-left opacity-70"
                         >
                             <div :class="[(section.cover_mode === 'horizontal' ? 'aspect-video' : 'aspect-[2/3]'), 'relative w-full bg-zinc-700 flex items-center justify-center overflow-hidden']">
-                                <img v-if="mod.thumbnail" :src="mod.thumbnail" :alt="mod.title" class="absolute inset-0 h-full w-full object-cover" />
-                                <svg v-else class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                <img
+                                    v-if="productCardCover(mod)"
+                                    :src="productCardCover(mod)"
+                                    :alt="mod.title"
+                                    class="absolute inset-0 h-full w-full object-cover"
+                                    @error="onCatalogCoverError(mod.id)"
+                                />
+                                <div v-else :class="catalogCoverPlaceholderClass()">
+                                    <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                </div>
                                 <div class="absolute inset-0 bg-black/50" />
                                 <div class="absolute inset-x-0 bottom-0 px-3 pb-3 pt-8">
                                     <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
@@ -229,41 +291,128 @@ function productSectionUnlocked(mod) {
                         </div>
                     </template>
                 </template>
-                <!-- Outros produtos: embed na mesma área (módulos importados) ou checkout / outra área (legado) -->
-                <template v-else-if="(section.section_type ?? 'courses') === 'products'">
-                    <component
+                <!-- Meus cursos (hub): link para a URL atual de cada curso -->
+                <template v-else-if="(section.section_type ?? 'courses') === 'my_courses'">
+                    <a
                         v-for="mod in section.modules"
                         :key="mod.id"
-                        :is="(productSectionNeedsCheckout(mod) || (mod.related_product?.type === 'link')) ? 'a' : Link"
-                        :href="productSectionNeedsCheckout(mod)
-                            ? (mod.related_product?.checkout_url || `/c/${mod.related_product?.checkout_slug}`)
-                            : (mod.related_product?.type === 'link'
-                                ? (mod.related_product?.deliverable_link || `${base_url}/products/${mod.related_product?.id}/deliverable`)
-                                : (mod.embed ? `${base_url}/modulo/${mod.id}` : `${base_url}/products/${mod.related_product?.id}/open`))"
-                        :target="(productSectionNeedsCheckout(mod) || (mod.related_product?.type === 'link')) ? '_blank' : undefined"
-                        :rel="(productSectionNeedsCheckout(mod) || (mod.related_product?.type === 'link')) ? 'noopener' : undefined"
-                        class="flex w-64 shrink-0 flex-col rounded-xl overflow-hidden bg-zinc-800/50 text-left transition hover:bg-zinc-800"
+                        :href="mod.related_product?.member_area_url || '#'"
+                        class="flex w-44 shrink-0 flex-col rounded-xl overflow-hidden bg-zinc-800/50 text-left transition hover:bg-zinc-800 sm:w-52"
                     >
-                        <div :class="[(section.cover_mode === 'horizontal' ? 'aspect-video' : 'aspect-[2/3]'), 'relative w-full bg-zinc-700 flex items-center justify-center overflow-hidden']">
+                        <div class="relative aspect-[2/3] w-full overflow-hidden bg-zinc-700">
                             <div
                                 class="pointer-events-none absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md ring-1 ring-white/10 backdrop-blur-sm"
                                 aria-hidden="true"
                             >
-                                <LockOpen v-if="productSectionUnlocked(mod)" class="h-4 w-4 text-emerald-300" />
-                                <Lock v-else class="h-4 w-4 text-amber-300" />
+                                <LockOpen class="h-4 w-4 text-emerald-300" />
                             </div>
-                            <img v-if="mod.related_product?.image_url || mod.thumbnail" :src="mod.related_product?.image_url || mod.thumbnail" :alt="mod.title" class="absolute inset-0 h-full w-full object-cover" />
-                            <svg v-else class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" /></svg>
+                            <img
+                                v-if="productCardCover(mod)"
+                                :src="productCardCover(mod)"
+                                :alt="mod.title"
+                                class="absolute inset-0 h-full w-full object-cover"
+                                @error="onCatalogCoverError(mod.id)"
+                            />
+                            <div v-else :class="catalogCoverPlaceholderClass()">
+                                <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                            </div>
                             <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8">
                                 <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
-                                <p v-if="mod.related_product?.name" class="truncate text-sm text-white/80">{{ mod.related_product.name }}</p>
-                                <span v-if="productSectionNeedsCheckout(mod)" class="mt-1 inline-block text-xs font-medium text-amber-300">Comprar para acessar</span>
-                                <span v-else-if="!isPaidProductSection(mod)" class="mt-1 inline-block text-xs font-medium text-white/80">Liberado</span>
-                                <span v-else-if="mod.related_product?.type === 'link'" class="mt-1 inline-block text-xs font-medium text-emerald-300">Abrir link</span>
-                                <span v-else class="mt-1 inline-block text-xs font-medium text-emerald-300">Acessar</span>
+                                <p v-if="mod.progress_percent != null" class="mt-1 text-xs text-emerald-300">{{ mod.progress_percent }}% concluído</p>
+                                <span class="mt-1 inline-block text-xs font-medium text-emerald-300">Acessar curso</span>
                             </div>
                         </div>
-                    </component>
+                    </a>
+                </template>
+                <!-- Outros produtos: embed na mesma área (módulos importados) ou checkout / outra área (legado) -->
+                <template v-else-if="(section.section_type ?? 'courses') === 'products'">
+                    <template v-for="mod in section.modules" :key="mod.id">
+                        <a
+                            v-if="productSectionOpensNewTab(mod) && productSectionClickHref(mod)"
+                            :href="productSectionClickHref(mod)"
+                            target="_blank"
+                            rel="noopener"
+                            class="flex w-44 shrink-0 flex-col rounded-xl overflow-hidden bg-zinc-800/50 text-left transition hover:bg-zinc-800 sm:w-52"
+                        >
+                            <div class="relative aspect-[2/3] w-full overflow-hidden bg-zinc-700">
+                                <div class="pointer-events-none absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md ring-1 ring-white/10 backdrop-blur-sm" aria-hidden="true">
+                                    <LockOpen v-if="productSectionUnlocked(mod)" class="h-4 w-4 text-emerald-300" />
+                                    <Lock v-else class="h-4 w-4 text-amber-300" />
+                                </div>
+                                <img
+                                    v-if="productCardCover(mod)"
+                                    :src="productCardCover(mod)"
+                                    :alt="mod.title"
+                                    class="absolute inset-0 h-full w-full object-cover"
+                                    @error="onCatalogCoverError(mod.id)"
+                                />
+                                <div v-else :class="catalogCoverPlaceholderClass()">
+                                    <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" /></svg>
+                                </div>
+                                <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8">
+                                    <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
+                                    <p v-if="mod.subtitle" class="mt-1 line-clamp-2 text-sm text-white/80">{{ mod.subtitle }}</p>
+                                    <span v-if="productSectionNeedsCheckout(mod)" class="mt-1 inline-block text-xs font-medium text-amber-300">{{ mod.external_url ? 'Ver oferta' : 'Comprar para acessar' }}</span>
+                                    <span v-else-if="mod.related_product?.type === 'link'" class="mt-1 inline-block text-xs font-medium text-emerald-300">Abrir link</span>
+                                </div>
+                            </div>
+                        </a>
+                        <button
+                            v-else-if="productSectionNeedsCheckout(mod) && !productSectionClickHref(mod)"
+                            type="button"
+                            class="flex w-44 shrink-0 flex-col rounded-xl overflow-hidden bg-zinc-800/50 text-left transition hover:bg-zinc-800 sm:w-52"
+                            @click="handleProductCardClick(mod, $event)"
+                        >
+                            <div class="relative aspect-[2/3] w-full overflow-hidden bg-zinc-700">
+                                <div class="pointer-events-none absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md ring-1 ring-white/10 backdrop-blur-sm" aria-hidden="true">
+                                    <Lock class="h-4 w-4 text-amber-300" />
+                                </div>
+                                <img
+                                    v-if="productCardCover(mod)"
+                                    :src="productCardCover(mod)"
+                                    :alt="mod.title"
+                                    class="absolute inset-0 h-full w-full object-cover"
+                                    @error="onCatalogCoverError(mod.id)"
+                                />
+                                <div v-else :class="catalogCoverPlaceholderClass()">
+                                    <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" /></svg>
+                                </div>
+                                <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8">
+                                    <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
+                                    <p v-if="mod.subtitle" class="mt-1 line-clamp-2 text-sm text-white/80">{{ mod.subtitle }}</p>
+                                    <span class="mt-1 inline-block text-xs font-medium text-amber-300">Indisponível para compra</span>
+                                </div>
+                            </div>
+                        </button>
+                        <Link
+                            v-else
+                            :href="productSectionClickHref(mod)"
+                            class="flex w-44 shrink-0 flex-col rounded-xl overflow-hidden bg-zinc-800/50 text-left transition hover:bg-zinc-800 sm:w-52"
+                        >
+                            <div class="relative aspect-[2/3] w-full overflow-hidden bg-zinc-700">
+                                <div class="pointer-events-none absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md ring-1 ring-white/10 backdrop-blur-sm" aria-hidden="true">
+                                    <LockOpen v-if="productSectionUnlocked(mod)" class="h-4 w-4 text-emerald-300" />
+                                    <Lock v-else class="h-4 w-4 text-amber-300" />
+                                </div>
+                                <img
+                                    v-if="productCardCover(mod)"
+                                    :src="productCardCover(mod)"
+                                    :alt="mod.title"
+                                    class="absolute inset-0 h-full w-full object-cover"
+                                    @error="onCatalogCoverError(mod.id)"
+                                />
+                                <div v-else :class="catalogCoverPlaceholderClass()">
+                                    <svg class="h-12 w-12 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" /></svg>
+                                </div>
+                                <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8">
+                                    <p class="truncate text-base font-medium text-white">{{ mod.title }}</p>
+                                    <p v-if="mod.subtitle" class="mt-1 line-clamp-2 text-sm text-white/80">{{ mod.subtitle }}</p>
+                                    <span v-if="!isPaidProductSection(mod)" class="mt-1 inline-block text-xs font-medium text-white/80">Liberado</span>
+                                    <span v-else class="mt-1 inline-block text-xs font-medium text-emerald-300">Acessar</span>
+                                </div>
+                            </div>
+                        </Link>
+                    </template>
                 </template>
                 <!-- Links externos: abrir URL em nova aba -->
                 <template v-else>

@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Configuração inicial (Docker) - Getfy</title>
+    <title>Configuração inicial (Docker) - Power On</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -24,7 +24,7 @@
     <div class="min-h-screen flex flex-col items-center justify-center px-6 py-10">
         <div class="w-full max-w-xl">
             <div class="text-center mb-8">
-                <img src="https://cdn.getfy.cloud/collapsed-logo.png" alt="Getfy" class="mx-auto mb-6 h-14 w-auto object-contain" />
+                <img src="/brand/logo-full.png" alt="Power On" class="mx-auto mb-6 h-14 w-auto object-contain" />
                 <h1 class="text-2xl font-bold text-zinc-900 dark:text-white">Configuração Docker</h1>
                 <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Defina o domínio público para gerar links corretos</p>
             </div>

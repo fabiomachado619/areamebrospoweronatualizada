@@ -26,8 +26,8 @@ function submit() {
         <div class="flex w-full flex-col justify-center px-8 py-12 lg:w-[30%] lg:min-w-[360px]">
             <div class="text-center">
                 <img
-                    src="https://cdn.getfy.cloud/collapsed-logo.png"
-                    alt="Getfy"
+                    src="/brand/logo-full.png"
+                    alt="Power On"
                     class="mx-auto mb-10 h-12 w-auto object-contain"
                 />
                 <h1 class="text-2xl font-bold text-zinc-900 dark:text-white">Criar administrador</h1>

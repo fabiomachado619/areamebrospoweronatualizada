@@ -26,7 +26,7 @@ if ($isAppInstalled($basePath)) {
 }
 
 $step = max(1, min(4, (int) ($_GET['step'] ?? $_POST['step'] ?? 1)));
-$logoUrl = 'https://cdn.getfy.cloud/collapsed-logo.png';
+$logoUrl = '/brand/logo-full.png';
 
 ?>
 <!DOCTYPE html>
@@ -44,7 +44,7 @@ $logoUrl = 'https://cdn.getfy.cloud/collapsed-logo.png';
     $baseUrl = 'http' . (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 's' : '') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $basePath;
     ?>
     <base href="<?= htmlspecialchars($baseUrl) ?>">
-    <title>Instalar Getfy</title>
+    <title>Instalar Power On</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -67,8 +67,8 @@ $logoUrl = 'https://cdn.getfy.cloud/collapsed-logo.png';
     <div class="min-h-screen flex flex-col items-center justify-center px-6 py-10">
         <div class="w-full max-w-xl">
             <div class="text-center mb-8">
-                <img src="<?= htmlspecialchars($logoUrl) ?>" alt="Getfy" class="mx-auto mb-6 h-14 w-auto object-contain" />
-                <h1 class="text-2xl font-bold text-zinc-900 dark:text-white">Instalação Getfy</h1>
+                <img src="<?= htmlspecialchars($logoUrl) ?>" alt="Power On" class="mx-auto mb-6 h-14 w-auto object-contain" />
+                <h1 class="text-2xl font-bold text-zinc-900 dark:text-white">Instalação Power On</h1>
                 <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Configure sua plataforma em poucos passos</p>
             </div>
 

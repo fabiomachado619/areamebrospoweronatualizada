@@ -827,7 +827,7 @@ const selectClass =
                                 >
                                     <div class="min-w-0">
                                         <p class="text-sm font-medium text-emerald-900 dark:text-emerald-100">
-                                            Parabéns, você está usando o Getfy Cloud com Cloudflare R2.
+                                            Parabéns, você está usando o Power On Cloud com Cloudflare R2.
                                         </p>
                                         <p class="mt-1 text-sm text-emerald-800 dark:text-emerald-200">
                                             As credenciais foram provisionadas automaticamente.

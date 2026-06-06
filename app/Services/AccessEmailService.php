@@ -15,7 +15,8 @@ class AccessEmailService
 {
     public function __construct(
         protected TenantMailConfigService $mailConfig,
-        protected MemberAreaResolver $memberAreaResolver
+        protected MemberAreaResolver $memberAreaResolver,
+        protected MemberHubService $memberHubService,
     ) {}
 
     /**
@@ -85,7 +86,7 @@ class AccessEmailService
 
         $customerName = $order->user?->name ?? explode('@', $customerEmail)[0] ?? 'Cliente';
         $linkAcesso = $order->user && $product->type === Product::TYPE_AREA_MEMBROS
-            ? $this->resolveMemberAreaMagicLink($product, $order->user)
+            ? $this->resolveAccessUrl($order->user, $product)
             : $this->resolveLinkAcesso($product);
 
         if (config('app.debug') && $product->type === Product::TYPE_AREA_MEMBROS) {
@@ -188,7 +189,7 @@ class AccessEmailService
                 && $senha !== ''
                 && ! str_contains($bodyTextBeforeReplace !== '' ? $bodyTextBeforeReplace : $bodyHtmlBeforeReplace, '{senha}')
             ) {
-                $bodyHtml = $this->appendMemberAreaPasswordCredentialsBlock($bodyHtml, $customerEmail, $senha);
+                $bodyHtml = $this->appendMemberAreaPasswordCredentialsBlock($bodyHtml, $customerEmail, $senha, $linkAcesso);
             }
         }
 
@@ -265,10 +266,14 @@ class AccessEmailService
      */
     public function getAccessLinkForOrder(Order $order): string
     {
-        $order->loadMissing(['product']);
+        $order->loadMissing(['product', 'user']);
         $product = $order->product;
         if (! $product) {
             return '';
+        }
+
+        if ($product->type === Product::TYPE_AREA_MEMBROS) {
+            return $this->resolveAccessUrl($order->user, $product);
         }
 
         return $this->resolveLinkAcesso($product);
@@ -331,19 +336,130 @@ class AccessEmailService
     }
 
     /**
+     * Send access email for enrollment webhook (n8n). Uses HUB URL when available.
+     */
+    public function sendForEnrollmentAccess(User $user, Product $course, ?string $plainPassword = null): bool
+    {
+        if ($course->type !== Product::TYPE_AREA_MEMBROS) {
+            return false;
+        }
+
+        if ($plainPassword !== null && $plainPassword !== '') {
+            Cache::put(
+                'access_password.'.$user->id.'.'.$course->id,
+                $plainPassword,
+                now()->addHours(24)
+            );
+        }
+
+        $config = $course->checkout_config ?? [];
+        $userEmailTemplate = is_array($config['email_template'] ?? null) ? $config['email_template'] : [];
+        $template = array_merge(Product::defaultEmailTemplate(), $userEmailTemplate);
+        $subject = (string) ($template['subject'] ?? 'Seu acesso');
+        $bodyText = (string) ($template['body_text'] ?? '');
+        $bodyHtml = (string) ($template['body_html'] ?? '');
+
+        if ($plainPassword === null
+            && $this->usesDefaultAccessEmailTemplate($userEmailTemplate)
+            && $this->memberHubService->hubForTenant($course->tenant_id)
+        ) {
+            $subject = 'Novo treinamento liberado — {nome_produto}';
+            $bodyText = "Olá, {nome_cliente}!\n\nUm novo treinamento foi liberado para você: {nome_produto}.\n\nAcesse sua área de membros:";
+            $bodyHtml = '';
+        }
+
+        if (array_key_exists('body_html', $userEmailTemplate) && ! array_key_exists('body_text', $userEmailTemplate)) {
+            $bodyText = '';
+        }
+
+        if (trim($bodyText) !== '') {
+            $bodyHtml = $this->wrapAccessTextInPrettyHtml($bodyText, '{link_acesso}');
+        } elseif ($bodyHtml === '') {
+            $bodyHtml = (string) (Product::defaultEmailTemplate()['body_html'] ?? '');
+        }
+
+        $customerEmail = $user->email;
+        if (! $customerEmail || ! filter_var($customerEmail, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        $customerName = $user->name ?: explode('@', $customerEmail)[0] ?? 'Cliente';
+        $linkAcesso = $this->resolveAccessUrl($user, $course);
+        $senha = $plainPassword ?? '';
+
+        $replace = [
+            '{nome_cliente}' => $customerName,
+            '{nome_produto}' => $course->name,
+            '{link_acesso}' => $linkAcesso,
+            '{email_cliente}' => $customerEmail,
+            '{senha}' => $senha,
+        ];
+        $subject = str_replace(array_keys($replace), array_values($replace), $subject);
+        if (trim($bodyText) !== '') {
+            $text = str_replace(array_keys($replace), array_values($replace), $bodyText);
+            $bodyHtml = $this->wrapAccessTextInPrettyHtml($text, $linkAcesso);
+        } else {
+            $bodyHtml = str_replace(array_keys($replace), array_values($replace), $bodyHtml);
+        }
+
+        if (! empty($template['logo_url'])) {
+            $bodyHtml = $this->prependLogoToBody($template['logo_url'], $bodyHtml);
+        }
+
+        if ($senha !== '' && ! str_contains($bodyText !== '' ? $bodyText : $bodyHtml, '{senha}')) {
+            $bodyHtml = $this->appendMemberAreaPasswordCredentialsBlock($bodyHtml, $customerEmail, $senha, $linkAcesso);
+        }
+
+        try {
+            $this->mailConfig->applyMailerConfigForTenant($course->tenant_id, [], null);
+
+            $mailable = new AccessGrantedMail($subject, $bodyHtml);
+            if (! empty($template['from_name'])) {
+                $mailable->from(config('mail.from.address'), $template['from_name']);
+            }
+            Mail::mailer('smtp')->to($customerEmail)->send($mailable);
+
+            if ($plainPassword !== null && $plainPassword !== '') {
+                Cache::forget('access_password.'.$user->id.'.'.$course->id);
+            }
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('AccessEmailService: falha ao enviar e-mail de matrícula (webhook).', [
+                'user_id' => $user->id,
+                'product_id' => $course->id,
+                'message' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
      * Send access email for a user who was manually granted access to a product.
      */
-    public function sendForUserProduct(User $user, Product $product): bool
+    public function sendForUserProduct(User $user, Product $product, ?string $plainPassword = null): bool
     {
         if ($product->type === Product::TYPE_LINK_PAGAMENTO) {
             return false;
         }
 
         $config = $product->checkout_config ?? [];
-        $template = array_merge(Product::defaultEmailTemplate(), $config['email_template'] ?? []);
+        $userEmailTemplate = is_array($config['email_template'] ?? null) ? $config['email_template'] : [];
+        $template = array_merge(Product::defaultEmailTemplate(), $userEmailTemplate);
         $subject = (string) ($template['subject'] ?? 'Seu acesso');
         $bodyText = (string) ($template['body_text'] ?? '');
         $bodyHtml = (string) ($template['body_html'] ?? '');
+
+        if ($product->type === Product::TYPE_AREA_MEMBROS
+            && $this->userHasOtherMemberCourses($user, $product)
+            && $this->usesDefaultAccessEmailTemplate($userEmailTemplate)
+            && $this->memberHubService->hubForTenant($product->tenant_id)
+        ) {
+            $subject = 'Novo treinamento liberado — {nome_produto}';
+            $bodyText = "Olá, {nome_cliente}!\n\nSeu acesso ao treinamento {nome_produto} foi liberado.\n\nAcesse sua área de membros:";
+            $bodyHtml = '';
+        }
 
         if (trim($bodyText) !== '') {
             $bodyHtml = $this->wrapAccessTextInPrettyHtml($bodyText, '{link_acesso}');
@@ -357,16 +473,15 @@ class AccessEmailService
         }
 
         $customerName = $user->name ?: explode('@', $customerEmail)[0] ?? 'Cliente';
-        $linkAcesso = $product->type === Product::TYPE_AREA_MEMBROS
-            ? $this->resolveMemberAreaMagicLink($product, $user)
-            : $this->resolveLinkAcesso($product);
+        $linkAcesso = $this->resolveAccessUrl($user, $product);
+        $senha = $plainPassword ?? '';
 
         $replace = [
             '{nome_cliente}' => $customerName,
             '{nome_produto}' => $product->name,
             '{link_acesso}' => $linkAcesso,
             '{email_cliente}' => $customerEmail,
-            '{senha}' => '',
+            '{senha}' => $senha,
         ];
         $subject = str_replace(array_keys($replace), array_values($replace), $subject);
         if (trim($bodyText) !== '') {
@@ -378,6 +493,10 @@ class AccessEmailService
 
         if (! empty($template['logo_url'])) {
             $bodyHtml = $this->prependLogoToBody($template['logo_url'], $bodyHtml);
+        }
+
+        if ($senha !== '' && ! str_contains($bodyText !== '' ? $bodyText : $bodyHtml, '{senha}')) {
+            $bodyHtml = $this->appendMemberAreaPasswordCredentialsBlock($bodyHtml, $customerEmail, $senha, $linkAcesso);
         }
 
         try {
@@ -401,6 +520,45 @@ class AccessEmailService
         }
     }
 
+    /**
+     * Resolve the access URL for member area emails (HUB when configured, else course).
+     */
+    public function resolveAccessUrl(User $user, Product $product): string
+    {
+        if ($product->type !== Product::TYPE_AREA_MEMBROS) {
+            return $this->resolveLinkAcesso($product);
+        }
+
+        $areaProduct = $this->resolveMemberAreaProductForAccess($product);
+        $hub = $this->memberHubService->hubForTenant($areaProduct->tenant_id);
+        if ($hub !== null) {
+            $official = $this->memberAreaResolver->officialMemberAreaLoginUrl($hub->tenant_id);
+            if ($official !== null) {
+                return $official;
+            }
+        }
+
+        return $this->resolveMemberAreaMagicLink($areaProduct, $user);
+    }
+
+    /**
+     * Product whose public URL should be used for access emails (HUB or standalone course).
+     */
+    public function resolveMemberAreaProductForAccess(Product $product): Product
+    {
+        if ($product->type !== Product::TYPE_AREA_MEMBROS) {
+            return $product;
+        }
+
+        if ($product->isMemberHub()) {
+            return $product;
+        }
+
+        $hub = $this->memberHubService->hubForTenant($product->tenant_id);
+
+        return $hub ?? $product;
+    }
+
     private function resolveLinkAcesso(Product $product): string
     {
         if ($product->type === Product::TYPE_LINK) {
@@ -410,13 +568,14 @@ class AccessEmailService
             return is_string($link) ? $link : '';
         }
         if ($product->type === Product::TYPE_AREA_MEMBROS) {
-            $slug = $product->checkout_slug ?? '';
+            $areaProduct = $this->resolveMemberAreaProductForAccess($product);
+            $slug = $areaProduct->checkout_slug ?? '';
             if ($slug !== '') {
                 try {
-                    return $this->memberAreaResolver->baseUrlForProduct($product);
+                    return $this->memberAreaResolver->baseUrlForProduct($areaProduct);
                 } catch (\Throwable $e) {
                     Log::warning('AccessEmailService: baseUrlForProduct falhou, usando fallback.', [
-                        'product_id' => $product->id,
+                        'product_id' => $areaProduct->id,
                         'error' => $e->getMessage(),
                     ]);
                 }
@@ -492,13 +651,18 @@ class AccessEmailService
         return $img.$bodyHtml;
     }
 
-    private function appendMemberAreaPasswordCredentialsBlock(string $bodyHtml, string $email, string $password): string
+    private function appendMemberAreaPasswordCredentialsBlock(string $bodyHtml, string $email, string $password, ?string $link = null): string
     {
+        $linkLine = $link !== null && $link !== ''
+            ? '<p style="margin:10px 0 0;font-size:14px;color:#0f172a;word-break:break-all;"><strong>Link:</strong> <a href="'.e($link).'" style="color:#0ea5e9;">'.e($link).'</a></p>'
+            : '';
+
         $block = '<div style="margin:24px 0 0;padding:20px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;">'
             .'<p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#92400e;"><strong>Guarde seus dados de acesso</strong></p>'
-            .'<p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#78350f;">O botão de acesso acima entra automaticamente na sua conta. Se você sair ou usar outro aparelho, faça login na área de membros com:</p>'
+            .'<p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#78350f;">Use os dados abaixo para entrar na área de membros:</p>'
             .'<p style="margin:0 0 10px;font-size:14px;color:#0f172a;"><strong>E-mail:</strong> '.e($email).'</p>'
-            .'<p style="margin:0;font-size:15px;color:#0f172a;font-family:Consolas,\'Courier New\',monospace;font-weight:600;letter-spacing:0.02em;word-break:break-all;"><strong>Senha:</strong> '.e($password).'</p>'
+            .'<p style="margin:0;font-size:15px;color:#0f172a;font-family:Consolas,\'Courier New\',monospace;font-weight:600;letter-spacing:0.02em;word-break:break-all;"><strong>Senha inicial:</strong> '.e($password).'</p>'
+            .$linkLine
             .'</div>';
 
         return $bodyHtml.$block;
@@ -516,7 +680,7 @@ class AccessEmailService
         }
 
         $urlSafe = htmlspecialchars($accessUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $buttonLabel = Str::contains($accessUrl, '/m/') ? 'Acessar agora' : 'Acessar link';
+        $buttonLabel = $this->accessButtonLabelForUrl($accessUrl);
 
         return '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;font-family:\'Segoe UI\',Tahoma,sans-serif;background:#f8fafc;padding:32px 24px;"><tr><td style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:28px 32px;">'
             . $htmlParagraphs
@@ -534,5 +698,37 @@ class AccessEmailService
     private function buildExternalMemberAreaPendingBody(string $customerName, string $productName): string
     {
         return '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;font-family:\'Segoe UI\',Tahoma,sans-serif;background:#f8fafc;padding:32px 24px;"><tr><td style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:32px 32px 24px;text-align:center;border-bottom:1px solid #e2e8f0;"><h1 style="margin:0;font-size:22px;font-weight:600;color:#0f172a;">Olá, '.e($customerName).'!</h1></td></tr><tr><td style="padding:28px 32px;"><p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#334155;">Seu pagamento de <strong>'.e($productName).'</strong> foi confirmado.</p><p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#334155;">Este produto é entregue em uma <strong>área de membros externa</strong>. Em instantes você receberá o acesso.</p><p style="margin:0;font-size:14px;line-height:1.6;color:#64748b;">Se você não receber o acesso em alguns minutos, entre em contato com o suporte do vendedor.</p></td></tr><tr><td style="padding:20px 32px;background:#f1f5f9;border-radius:0 0 12px 12px;"><p style="margin:0;font-size:13px;color:#64748b;">Qualquer dúvida, responda este e-mail.</p></td></tr></table></td></tr></table>';
+    }
+
+    private function accessButtonLabelForUrl(string $accessUrl): string
+    {
+        if (Str::contains($accessUrl, '/access?') || Str::contains($accessUrl, '/m/')) {
+            return 'Acessar Área de Membros';
+        }
+
+        return 'Acessar link';
+    }
+
+    /**
+     * @param  array<string, mixed>  $userEmailTemplate
+     */
+    private function usesDefaultAccessEmailTemplate(array $userEmailTemplate): bool
+    {
+        if ($userEmailTemplate === []) {
+            return true;
+        }
+
+        $customKeys = array_diff(array_keys($userEmailTemplate), ['logo_url', 'from_name']);
+
+        return $customKeys === [];
+    }
+
+    private function userHasOtherMemberCourses(User $user, Product $product): bool
+    {
+        return $user->products()
+            ->where('type', Product::TYPE_AREA_MEMBROS)
+            ->where('is_member_hub', false)
+            ->where('products.id', '!=', $product->id)
+            ->exists();
     }
 }

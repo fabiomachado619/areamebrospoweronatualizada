@@ -80,7 +80,7 @@ function confirmDelete(app) {
             <div class="relative max-w-md w-full rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
                 <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Para que serve a API de Pagamentos?</h2>
                 <p class="mt-3 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                    Ela serve para <strong class="text-zinc-800 dark:text-zinc-200">conectar com plataformas externas</strong> ou com seus próprios sistemas e SaaS. Assim você processa pagamentos usando os gateways já configurados no Getfy, sem precisar integrar cada plataforma diretamente com cada método de pagamento.
+                    Ela serve para <strong class="text-zinc-800 dark:text-zinc-200">conectar com plataformas externas</strong> ou com seus próprios sistemas e SaaS. Assim você processa pagamentos usando os gateways já configurados no Power On, sem precisar integrar cada plataforma diretamente com cada método de pagamento.
                 </p>
                 <ul class="mt-4 space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
                     <li class="flex items-start gap-2">

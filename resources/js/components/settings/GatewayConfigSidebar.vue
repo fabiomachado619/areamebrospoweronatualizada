@@ -520,7 +520,7 @@ const canTestConnection = computed(() => {
                                 v-if="gateway.oauth_start_url && !gateway.oauth_connected"
                                 class="text-center text-[11px] text-zinc-500 dark:text-zinc-400"
                             >
-                                Abre o fluxo de autorização do gateway e, após o consentimento, salva o token no Getfy.
+                                Abre o fluxo de autorização do gateway e, após o consentimento, salva o token no Power On.
                             </p>
                             <Button
                                 v-if="gateway.oauth_disconnect_url && gateway.oauth_connected"

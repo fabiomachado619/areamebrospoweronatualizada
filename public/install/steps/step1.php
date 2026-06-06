@@ -1,6 +1,6 @@
 <div class="space-y-6">
     <p class="text-zinc-600 dark:text-zinc-400">
-        Bem-vindo ao assistente de instalação da Getfy. Este processo irá configurar sua plataforma de vendas de infoprodutos.
+        Bem-vindo ao assistente de instalação da Power On. Este processo irá configurar sua plataforma de vendas de infoprodutos.
     </p>
     <ul class="space-y-2 text-sm text-zinc-600 dark:text-zinc-400 list-disc list-inside">
         <li>Configurar conexão com o banco de dados</li>

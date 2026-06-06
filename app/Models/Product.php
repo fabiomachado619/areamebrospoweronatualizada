@@ -31,6 +31,8 @@ class Product extends Model
         'checkout_config',
         'description',
         'type',
+        'is_member_hub',
+        'member_hub_product_id',
         'billing_type',
         'image',
         'price',
@@ -47,6 +49,7 @@ class Product extends Model
         return [
             'price' => 'decimal:2',
             'is_active' => 'boolean',
+            'is_member_hub' => 'boolean',
             'cajupay_split_payout_enabled' => 'boolean',
             'checkout_config' => 'array',
             'member_area_config' => 'array',
@@ -327,8 +330,8 @@ class Product extends Model
             'logo_url' => '',
             'from_name' => '',
             'subject' => 'Seu acesso a {nome_produto}',
-            'body_text' => "Olá, {nome_cliente}!\n\nObrigado por adquirir {nome_produto}.\n\nUse o link abaixo para acessar seu conteúdo:\n{link_acesso}\n\nQualquer dúvida, responda este e-mail.",
-            'body_html' => '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;font-family:\'Segoe UI\',Tahoma,sans-serif;background:#f8fafc;padding:32px 24px;"><tr><td style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:32px 32px 24px;text-align:center;border-bottom:1px solid #e2e8f0;"><h1 style="margin:0;font-size:22px;font-weight:600;color:#0f172a;">Olá, {nome_cliente}!</h1></td></tr><tr><td style="padding:28px 32px;"><p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#334155;">Obrigado por adquirir <strong>{nome_produto}</strong>.</p><p style="margin:0 0 24px;font-size:16px;line-height:1.6;color:#334155;">Clique no botão abaixo para acessar seu conteúdo agora:</p><p style="margin:0 0 24px;text-align:center;"><a href="{link_acesso}" style="display:inline-block;padding:14px 32px;background:#0ea5e9;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;border-radius:8px;">Acessar agora</a></p><p style="margin:0 0 24px;font-size:14px;line-height:1.5;color:#64748b;">Ou copie e cole no navegador:<br/><a href="{link_acesso}" style="color:#0ea5e9;word-break:break-all;">{link_acesso}</a></p><div style="margin:28px 0 0;padding:20px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;"><p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#92400e;"><strong>Guarde seus dados de acesso</strong></p><p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#78350f;">O botão acima entra automaticamente na sua conta. Se você sair ou usar outro aparelho, faça login na área de membros com:</p><p style="margin:0 0 10px;font-size:14px;color:#0f172a;"><strong>E-mail:</strong> {email_cliente}</p><p style="margin:0;font-size:15px;color:#0f172a;font-family:Consolas,\'Courier New\',monospace;font-weight:600;letter-spacing:0.02em;word-break:break-all;"><strong>Senha:</strong> {senha}</p></div></td></tr><tr><td style="padding:20px 32px;background:#f1f5f9;border-radius:0 0 12px 12px;"><p style="margin:0;font-size:13px;color:#64748b;">Qualquer dúvida, responda este e-mail.</p></td></tr></table></td></tr></table>',
+            'body_text' => "Olá, {nome_cliente}!\n\nSeu acesso ao treinamento {nome_produto} foi liberado.\n\nUse o link abaixo para acessar sua área de membros:\n{link_acesso}\n\nQualquer dúvida, responda este e-mail.",
+            'body_html' => '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;font-family:\'Segoe UI\',Tahoma,sans-serif;background:#f8fafc;padding:32px 24px;"><tr><td style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:32px 32px 24px;text-align:center;border-bottom:1px solid #e2e8f0;"><h1 style="margin:0;font-size:22px;font-weight:600;color:#0f172a;">Olá, {nome_cliente}!</h1></td></tr><tr><td style="padding:28px 32px;"><p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#334155;">Seu acesso ao treinamento <strong>{nome_produto}</strong> foi liberado.</p><p style="margin:0 0 24px;font-size:16px;line-height:1.6;color:#334155;">Clique no botão abaixo para acessar sua área de membros:</p><p style="margin:0 0 24px;text-align:center;"><a href="{link_acesso}" style="display:inline-block;padding:14px 32px;background:#0ea5e9;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;border-radius:8px;">Acessar Área de Membros</a></p><p style="margin:0 0 24px;font-size:14px;line-height:1.5;color:#64748b;">Ou copie e cole no navegador:<br/><a href="{link_acesso}" style="color:#0ea5e9;word-break:break-all;">{link_acesso}</a></p><div style="margin:28px 0 0;padding:20px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;"><p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#92400e;"><strong>Guarde seus dados de acesso</strong></p><p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#78350f;">O botão acima entra automaticamente na sua conta. Se você sair ou usar outro aparelho, faça login na área de membros com:</p><p style="margin:0 0 10px;font-size:14px;color:#0f172a;"><strong>E-mail:</strong> {email_cliente}</p><p style="margin:0;font-size:15px;color:#0f172a;font-family:Consolas,\'Courier New\',monospace;font-weight:600;letter-spacing:0.02em;word-break:break-all;"><strong>Senha:</strong> {senha}</p></div></td></tr><tr><td style="padding:20px 32px;background:#f1f5f9;border-radius:0 0 12px 12px;"><p style="margin:0;font-size:13px;color:#64748b;">Qualquer dúvida, responda este e-mail.</p></td></tr></table></td></tr></table>',
         ];
     }
 
@@ -651,6 +654,21 @@ class Product extends Model
         return $this->hasOne(MemberAreaDomain::class);
     }
 
+    public function memberHub(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Product::class, 'member_hub_product_id');
+    }
+
+    public function hubCourses(): HasMany
+    {
+        return $this->hasMany(Product::class, 'member_hub_product_id');
+    }
+
+    public function isMemberHub(): bool
+    {
+        return $this->type === self::TYPE_AREA_MEMBROS && (bool) $this->is_member_hub;
+    }
+
     public function memberSections(): HasMany
     {
         return $this->hasMany(MemberSection::class)->orderBy('position');
@@ -718,10 +736,14 @@ class Product extends Model
 
     public function hasMemberAreaAccess(User $user): bool
     {
-        // Admin/Infoprodutor do mesmo tenant do produto tem acesso automático à área de membros
-        // (usuário de equipe não deve ganhar acesso automático)
-        if (($user->isAdmin() || $user->isInfoprodutor()) && $user->tenant_id === $this->tenant_id) {
+        if ($this->userSharesTenantWithProduct($user)
+            && ($user->isAdmin() || $user->isInfoprodutor() || $user->isTeam())) {
             return true;
+        }
+
+        $hubContext = $this->memberHubAccessContext();
+        if ($hubContext !== null) {
+            return $hubContext->userHasMemberHubAccess($user);
         }
 
         if ($this->billing_type === self::BILLING_SUBSCRIPTION) {
@@ -729,6 +751,65 @@ class Product extends Model
         }
 
         return $this->users()->where('user_id', $user->id)->exists();
+    }
+
+    private function userSharesTenantWithProduct(User $user): bool
+    {
+        $productTenantId = (int) $this->tenant_id;
+        $userTenantId = (int) $user->tenant_id;
+
+        return $productTenantId > 0 && $userTenantId === $productTenantId;
+    }
+
+    /**
+     * HUB efetivo para regras de acesso (flag is_member_hub, vínculo ou slug do tenant).
+     */
+    private function memberHubAccessContext(): ?self
+    {
+        if ($this->isMemberHub()) {
+            return $this;
+        }
+
+        if ($this->member_hub_product_id) {
+            $hub = $this->relationLoaded('memberHub')
+                ? $this->memberHub
+                : static::query()->find($this->member_hub_product_id);
+            if ($hub instanceof self && $hub->isMemberHub()) {
+                return $hub;
+            }
+        }
+
+        $tenantHub = app(\App\Services\MemberHubService::class)->hubForTenant($this->tenant_id);
+        if ($tenantHub instanceof self
+            && strtolower((string) $tenantHub->checkout_slug) === strtolower((string) $this->checkout_slug)) {
+            return $tenantHub;
+        }
+
+        return null;
+    }
+
+    private function userHasMemberHubAccess(User $user): bool
+    {
+        if ($this->billing_type === self::BILLING_SUBSCRIPTION
+            && app(\App\Services\SubscriptionAccessService::class)->userHasSubscriptionAccess($user, $this)) {
+            return true;
+        }
+
+        if ($this->users()->where('user_id', $user->id)->exists()) {
+            return true;
+        }
+
+        if ($this->userSharesTenantWithProduct($user) && $user->isAluno()) {
+            return true;
+        }
+
+        return static::query()
+            ->where('tenant_id', $this->tenant_id)
+            ->where('type', self::TYPE_AREA_MEMBROS)
+            ->where('is_member_hub', false)
+            ->where('id', '!=', $this->id)
+            ->whereHas('users', fn ($q) => $q->where('users.id', $user->id))
+            ->exists();
     }
 
     /**

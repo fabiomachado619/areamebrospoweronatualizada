@@ -11,6 +11,7 @@ import {
     Repeat,
     Users,
     BarChart3,
+    BookOpen,
     Puzzle,
     Cable,
     Settings,
@@ -96,6 +97,7 @@ const navItems = computed(() => {
     if (canView('dashboard.view')) groupOperacao.push({ name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard });
     if (canView('vendas.view')) groupOperacao.push({ name: 'Vendas', href: '/vendas', icon: CircleDollarSign });
     if (canView('produtos.view')) groupOperacao.push({ name: 'Produtos', href: '/produtos', icon: Package });
+    if (canView('produtos.view')) groupOperacao.push({ name: 'Área de Membros', href: '/area-membros-admin', icon: BookOpen });
     if (canView('relatorios.view')) groupOperacao.push({ name: 'Relatórios', href: '/relatorios', icon: BarChart3 });
     if (canView('reembolsos.view')) groupOperacao.push({ name: 'Reembolsos', href: '/reembolsos', icon: RotateCcw });
     if (canView('financeiro.view')) {

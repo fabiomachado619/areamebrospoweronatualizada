@@ -95,7 +95,7 @@ function copyLink() {
 
                     <!-- Brand -->
                     <p class="mt-8 text-center text-xs font-medium tracking-wider text-zinc-400 dark:text-zinc-500">
-                        Getfy
+                        Power On
                     </p>
                 </div>
             </div>

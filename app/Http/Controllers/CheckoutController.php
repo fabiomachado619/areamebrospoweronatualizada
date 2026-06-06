@@ -27,7 +27,7 @@ use App\Models\User;
 use App\Services\GeoIp;
 use App\Services\EfiPixRecorrenteService;
 use App\Services\StorageService;
-use App\Services\CheckoutAbuseGuard;
+use App\Services\CheckoutStudentProvisioningService;
 use App\Services\PaymentService;
 use App\Services\PushinPayPixRecorrenteService;
 use App\Support\CajuPayLocale;
@@ -736,41 +736,13 @@ class CheckoutController extends Controller
 
         $tenantId = $product->tenant_id;
 
-        $plainPassword = null;
-        if ($product->type === Product::TYPE_AREA_MEMBROS) {
-            $loginConfig = $product->member_area_config['login'] ?? [];
-            $passwordMode = $loginConfig['password_mode'] ?? 'auto';
-            $defaultPassword = trim((string) ($loginConfig['default_password'] ?? ''));
-            if ($passwordMode === 'default' && $defaultPassword !== '') {
-                $plainPassword = $defaultPassword;
-            } else {
-                $plainPassword = Str::random(12);
-            }
-        } else {
-            $plainPassword = Str::random(32);
-        }
-        $passwordHash = bcrypt($plainPassword);
-
-        $user = User::firstOrCreate(
-            ['email' => $validated['email']],
-            [
-                'name' => $validated['name'] ?? $validated['email'],
-                'password' => $passwordHash,
-                'role' => User::ROLE_ALUNO,
-                'tenant_id' => $tenantId,
-            ]
+        $provisioned = app(CheckoutStudentProvisioningService::class)->findOrCreateBuyer(
+            $validated['email'],
+            $validated['name'] ?? $validated['email'],
+            $product
         );
-        if ($user->wasRecentlyCreated) {
-            $user->update(['role' => User::ROLE_ALUNO]);
-        }
-        $orderMetadata = [];
-        if ($product->type === Product::TYPE_AREA_MEMBROS && $plainPassword !== null) {
-            if (! $user->wasRecentlyCreated) {
-                $user->update(['password' => $passwordHash]);
-            }
-            Cache::put('access_password.' . $user->id . '.' . $product->id, $plainPassword, now()->addHours(2));
-            $orderMetadata['access_password_temp'] = encrypt($plainPassword);
-        }
+        $user = $provisioned['user'];
+        $orderMetadata = $provisioned['access_metadata'];
 
         $checkoutSessionForAttribution = null;
         $sessionTokenForAttribution = trim((string) ($validated['checkout_session_token'] ?? ''));
@@ -2012,49 +1984,24 @@ class CheckoutController extends Controller
 
         $tenantId = $product->tenant_id;
 
-        $plainPassword = null;
-        if ($product->type === Product::TYPE_AREA_MEMBROS) {
-            $loginConfig = $product->member_area_config['login'] ?? [];
-            $passwordMode = $loginConfig['password_mode'] ?? 'auto';
-            $defaultPassword = trim((string) ($loginConfig['default_password'] ?? ''));
-            $plainPassword = ($passwordMode === 'default' && $defaultPassword !== '') ? $defaultPassword : Str::random(12);
-        } else {
-            $plainPassword = Str::random(32);
-        }
-        $passwordHash = bcrypt($plainPassword);
-
-        $user = User::firstOrCreate(
-            ['email' => $validated['email']],
-            [
-                'name' => $validated['name'] ?? $validated['email'],
-                'password' => $passwordHash,
-                'role' => User::ROLE_ALUNO,
-                'tenant_id' => $tenantId,
-            ]
+        $provisioned = app(CheckoutStudentProvisioningService::class)->findOrCreateBuyer(
+            $validated['email'],
+            $validated['name'] ?? $validated['email'],
+            $product,
+            true
         );
-        if ($user->wasRecentlyCreated) {
-            $user->update(['role' => User::ROLE_ALUNO]);
-        } elseif (! empty($validated['name']) && trim((string) $user->name) !== trim((string) $validated['name'])) {
-            $user->update(['name' => trim((string) $validated['name'])]);
-        }
+        $user = $provisioned['user'];
 
-        $orderMetadata = [
+        $orderMetadata = array_merge([
             'checkout_payment_method' => $draft['payment_method'],
             'cajupay_session_token' => $draft['cajupay_token'] ?? null,
             'cajupay_checkout_session_id' => $draft['checkout_session_id'] ?? null,
-        ];
+        ], $provisioned['access_metadata']);
         if ($displayCurrency !== '' && $displayCurrency !== $chargeCurrency) {
             $orderMetadata['display_currency'] = $displayCurrency;
             if (isset($draft['display_amount']) && is_numeric($draft['display_amount'])) {
                 $orderMetadata['display_amount'] = (float) $draft['display_amount'];
             }
-        }
-        if ($product->type === Product::TYPE_AREA_MEMBROS && $plainPassword !== null) {
-            if (! $user->wasRecentlyCreated) {
-                $user->update(['password' => $passwordHash]);
-            }
-            Cache::put('access_password.' . $user->id . '.' . $product->id, $plainPassword, now()->addHours(2));
-            $orderMetadata['access_password_temp'] = encrypt($plainPassword);
         }
 
         $cpfDigits = preg_replace('/\D/', '', (string) ($validated['cpf'] ?? '')) ?: null;
@@ -2213,38 +2160,17 @@ class CheckoutController extends Controller
 
         $tenantId = $product->tenant_id;
 
-        $plainPassword = null;
-        if ($product->type === Product::TYPE_AREA_MEMBROS) {
-            $loginConfig = $product->member_area_config['login'] ?? [];
-            $passwordMode = $loginConfig['password_mode'] ?? 'auto';
-            $defaultPassword = trim((string) ($loginConfig['default_password'] ?? ''));
-            $plainPassword = ($passwordMode === 'default' && $defaultPassword !== '') ? $defaultPassword : Str::random(12);
-        } else {
-            $plainPassword = Str::random(32);
-        }
-        $passwordHash = bcrypt($plainPassword);
-
-        $user = User::firstOrCreate(
-            ['email' => $validated['email']],
-            [
-                'name' => $validated['name'] ?? $validated['email'],
-                'password' => $passwordHash,
-                'role' => User::ROLE_ALUNO,
-                'tenant_id' => $tenantId,
-            ]
+        $provisioned = app(CheckoutStudentProvisioningService::class)->findOrCreateBuyer(
+            $validated['email'],
+            $validated['name'] ?? $validated['email'],
+            $product
         );
-        if ($user->wasRecentlyCreated) {
-            $user->update(['role' => User::ROLE_ALUNO]);
-        }
+        $user = $provisioned['user'];
 
-        $orderMetadata = ['checkout_payment_method' => $paymentMethod];
-        if ($product->type === Product::TYPE_AREA_MEMBROS && $plainPassword !== null) {
-            if (! $user->wasRecentlyCreated) {
-                $user->update(['password' => $passwordHash]);
-            }
-            Cache::put('access_password.' . $user->id . '.' . $product->id, $plainPassword, now()->addHours(2));
-            $orderMetadata['access_password_temp'] = encrypt($plainPassword);
-        }
+        $orderMetadata = array_merge(
+            ['checkout_payment_method' => $paymentMethod],
+            $provisioned['access_metadata']
+        );
 
         $order = Order::create([
             'tenant_id' => $tenantId,

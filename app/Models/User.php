@@ -38,6 +38,8 @@ class User extends Authenticatable
         'pix_key',
         'pix_key_type',
         'pix_owner_document',
+        'phone',
+        'document',
     ];
 
     public function isAdmin(): bool

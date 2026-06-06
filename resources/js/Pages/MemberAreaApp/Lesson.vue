@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { Link, router } from '@inertiajs/vue3';
+import { Link, router, usePage } from '@inertiajs/vue3';
 import MemberAreaAppLayout from '@/Layouts/MemberAreaAppLayout.vue';
 import Button from '@/components/ui/Button.vue';
 import MemberAreaVideoPlayer from '@/components/MemberAreaVideoPlayer.vue';
@@ -19,6 +19,13 @@ const props = defineProps({
     comments_enabled: { type: Boolean, default: false },
     comments_require_approval: { type: Boolean, default: true },
     lesson_comments: { type: Array, default: () => [] },
+});
+
+const page = usePage();
+const memberAreaHomeUrl = computed(() => page.props.home_url ?? `/m/${props.slug}`);
+const isHubCourse = computed(() => {
+    const home = page.props.home_url;
+    return typeof home === 'string' && home !== '' && home !== `/m/${props.slug}`;
 });
 
 function normalizePdfFiles(lesson, defaultName = 'Material') {
@@ -132,10 +139,19 @@ function formatCommentDate(iso) {
 
 <template>
     <div class="space-y-6">
-        <div class="flex items-center gap-2 text-sm text-zinc-400">
-            <Link :href="`/m/${slug}/modulos`" class="hover:text-[var(--ma-primary)]">Módulos</Link>
-            <span v-if="lesson.section"> / {{ lesson.section.title }}</span>
-            <span v-if="lesson.module"> / {{ lesson.module.title }}</span>
+        <div class="flex flex-wrap items-center gap-2 text-sm text-zinc-400">
+            <template v-if="isHubCourse">
+                <Link :href="memberAreaHomeUrl" class="hover:text-[var(--ma-primary)]">Área de Membros</Link>
+                <span>/</span>
+                <Link :href="`/m/${slug}/modulos`" class="hover:text-[var(--ma-primary)]">{{ product.name }}</Link>
+                <span v-if="lesson.section"> / {{ lesson.section.title }}</span>
+                <span v-if="lesson.module"> / {{ lesson.module.title }}</span>
+            </template>
+            <template v-else>
+                <Link :href="`/m/${slug}/modulos`" class="hover:text-[var(--ma-primary)]">Módulos</Link>
+                <span v-if="lesson.section"> / {{ lesson.section.title }}</span>
+                <span v-if="lesson.module"> / {{ lesson.module.title }}</span>
+            </template>
         </div>
         <h1 class="text-2xl font-bold">{{ lesson.title }}</h1>
 

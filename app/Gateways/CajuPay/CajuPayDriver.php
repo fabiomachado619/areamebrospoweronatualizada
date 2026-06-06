@@ -560,7 +560,7 @@ class CajuPayDriver implements GatewayDriver
             } else {
                 $response = $http->post('/api/webhooks/endpoints', [
                     'url' => $url,
-                    'description' => 'Getfy ('.parse_url($url, PHP_URL_HOST).')',
+                    'description' => config('app.name', 'Power On').(' ('.parse_url($url, PHP_URL_HOST).')'),
                     'event_types' => [
                         'checkout.payment.paid',
                         'checkout.payment.failed',

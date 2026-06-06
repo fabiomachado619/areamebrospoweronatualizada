@@ -22,6 +22,8 @@ use App\Models\User;
 use App\Services\GamificationService;
 use App\Services\MemberAreaResolver;
 use App\Services\MemberCommentService;
+use App\Services\MemberAreaPwaAdminService;
+use App\Services\MemberHubService;
 use App\Services\MemberProgressService;
 use App\Services\StorageService;
 use Illuminate\Http\JsonResponse;
@@ -39,7 +41,9 @@ class MemberAreaAppController extends Controller
     public function __construct(
         protected MemberProgressService $progressService,
         protected MemberAreaResolver $resolver,
-        protected GamificationService $gamificationService
+        protected GamificationService $gamificationService,
+        protected MemberHubService $memberHubService,
+        protected MemberAreaPwaAdminService $memberAreaPwaAdminService,
     ) {}
 
     /**
@@ -85,16 +89,39 @@ class MemberAreaAppController extends Controller
         $userProductIds = $user->products()->pluck('products.id')->flip()->all();
         $push = $this->pushProps($product);
 
-        return Inertia::render('MemberAreaApp/Show', [
-            'product' => $this->productToArray($product),
-            'config' => $config,
-            'sections' => $sections->map(fn (MemberSection $s) => [
+        $dbSections = $sections->map(function (MemberSection $s) use ($product, $user, $userProductIds, $baseUrl, $accessStartAt, $now, $completedLessonIds) {
+            $modules = $s->modules
+                ->map(fn ($m) => $this->mapModuleForMemberArea($m, $s, $product, $user, $userProductIds, $baseUrl, $accessStartAt, $now, $completedLessonIds))
+                ->map(fn ($payload) => $this->memberHubService->filterVitrineModule($product, $payload, $userProductIds))
+                ->filter()
+                ->values()
+                ->all();
+
+            return [
                 'id' => $s->id,
                 'title' => $s->title,
                 'cover_mode' => $s->cover_mode ?? 'vertical',
                 'section_type' => $s->section_type ?? 'courses',
-                'modules' => $s->modules->map(fn ($m) => $this->mapModuleForMemberArea($m, $s, $product, $user, $userProductIds, $baseUrl, $accessStartAt, $now, $completedLessonIds))->values()->all(),
-            ])->values()->all(),
+                'modules' => $modules,
+            ];
+        })->filter(function (array $section) use ($product) {
+            if ($product->isMemberHub() && ($section['section_type'] ?? '') === 'products' && $section['modules'] === []) {
+                return false;
+            }
+
+            return true;
+        })->values();
+
+        $virtualMyCourses = $this->memberHubService->buildMyCoursesSection($product, $user);
+        $sectionsPayload = $virtualMyCourses !== null
+            ? collect([$virtualMyCourses])->concat($dbSections)->values()->all()
+            : $dbSections->all();
+
+        return Inertia::render('MemberAreaApp/Show', [
+            'product' => $this->productToArray($product),
+            'config' => $this->memberAreaConfigForView($product),
+            'sections' => $sectionsPayload,
+            'is_member_hub' => $product->isMemberHub(),
             'progress_percent' => $progressPercent,
             'continue_watching' => $continueWatching,
             'internal_products' => $internalProducts->map(fn (MemberInternalProduct $ip) => [
@@ -125,20 +152,22 @@ class MemberAreaAppController extends Controller
 
         return Inertia::render('MemberAreaApp/Modulos', [
             'product' => $this->productToArray($product),
-            'config' => $product->member_area_config,
+            'config' => $this->memberAreaConfigForView($product),
             'sections' => $sections->map(fn (MemberSection $s) => [
                 'id' => $s->id,
                 'title' => $s->title,
                 'cover_mode' => $s->cover_mode ?? 'vertical',
-                'modules' => $s->modules->map(function (MemberModule $m) use ($accessStartAt, $now, $completedLessonIds) {
+                'modules' => $s->modules->map(function (MemberModule $m) use ($product, $accessStartAt, $now, $completedLessonIds) {
                     $effective = ($m->source_member_module_id)
                         ? $this->resolveContentModuleForWrapper($m)
                         : $m;
+                    $coverUrl = $this->resolveModuleThumbnail($product, $m->thumbnail);
 
                     return [
                         'id' => $m->id,
                         'title' => $m->title,
-                        'thumbnail' => $m->thumbnail,
+                        'thumbnail' => $coverUrl,
+                        'thumbnail_url' => $coverUrl,
                         'show_title_on_cover' => $m->show_title_on_cover ?? true,
                         ...$this->moduleLockPayload($effective, $accessStartAt, $now),
                         'lessons' => $effective->lessons->map(fn (MemberLesson $l) => [
@@ -237,18 +266,26 @@ class MemberAreaAppController extends Controller
 
         $progressPercent = $this->progressService->completionPercent($product, $user);
 
-        $sections = $product->memberSections()->with('modules')->orderBy('position')->get();
+        $sections = $product->memberSections()
+            ->with(['modules' => fn ($q) => $q->orderBy('position')])
+            ->orderBy('position')
+            ->get();
         $sectionsPayload = $sections->map(fn (MemberSection $s) => [
             'id' => $s->id,
             'title' => $s->title,
             'cover_mode' => $s->cover_mode ?? 'vertical',
-            'modules' => $s->modules->map(fn ($m) => [
-                'id' => $m->id,
-                'title' => $m->title,
-                'thumbnail' => $m->thumbnail,
-                'show_title_on_cover' => $m->show_title_on_cover ?? true,
-                ...$this->moduleLockPayload($m, $accessStartAt, $now),
-            ])->values()->all(),
+            'modules' => $s->modules->map(function ($m) use ($product, $accessStartAt, $now) {
+                $coverUrl = $this->resolveModuleThumbnail($product, $m->thumbnail);
+
+                return [
+                    'id' => $m->id,
+                    'title' => $m->title,
+                    'thumbnail' => $coverUrl,
+                    'thumbnail_url' => $coverUrl,
+                    'show_title_on_cover' => $m->show_title_on_cover ?? true,
+                    ...$this->moduleLockPayload($m, $accessStartAt, $now),
+                ];
+            })->values()->all(),
         ])->values()->all();
 
         $config = $product->member_area_config;
@@ -278,7 +315,7 @@ class MemberAreaAppController extends Controller
 
         return Inertia::render('MemberAreaApp/ModuleContent', [
             'product' => $this->productToArray($product),
-            'config' => $product->member_area_config,
+            'config' => $this->memberAreaConfigForView($product),
             'base_url' => $this->baseUrlForRequest($product, $request),
             'slug' => $slug,
             'module' => [
@@ -404,7 +441,7 @@ class MemberAreaAppController extends Controller
 
         return Inertia::render('MemberAreaApp/Lesson', [
             'product' => $this->productToArray($product),
-            'config' => $product->member_area_config,
+            'config' => $this->memberAreaConfigForView($product),
             'lesson' => $lessonPayload,
             'base_url' => $this->baseUrlForRequest($product, $request),
             'slug' => $slug,
@@ -687,7 +724,7 @@ class MemberAreaAppController extends Controller
 
         return Inertia::render('MemberAreaApp/Loja', [
             'product' => $this->productToArray($product),
-            'config' => $product->member_area_config,
+            'config' => $this->memberAreaConfigForView($product),
             'items' => $items,
             'base_url' => $this->baseUrlForRequest($product, $request),
             'slug' => $slug,
@@ -710,7 +747,7 @@ class MemberAreaAppController extends Controller
 
         return Inertia::render('MemberAreaApp/Comunidade', [
             'product' => $this->productToArray($product),
-            'config' => $product->member_area_config,
+            'config' => $this->memberAreaConfigForView($product),
             'pages' => $pages->map(fn ($p) => [
                 'id' => $p->id,
                 'title' => $p->title,
@@ -954,7 +991,7 @@ class MemberAreaAppController extends Controller
 
         return Inertia::render('MemberAreaApp/Certificado', [
             'product' => $this->productToArray($product),
-            'config' => $product->member_area_config,
+            'config' => $this->memberAreaConfigForView($product),
             'recipient_name' => $user->name,
             'certificate_available' => $certificateAvailable,
             'progress_percent' => $progressPercent,
@@ -1032,14 +1069,42 @@ class MemberAreaAppController extends Controller
     /** @return array{push_enabled: bool, vapid_public: string|null} */
     private function pushProps(Product $product): array
     {
-        $config = $product->member_area_config;
-        $pwa = $config['pwa'] ?? [];
+        $pwa = $this->memberAreaPwaAdminService->resolvePwaContextForProduct($product)['pwa'];
         $pushEnabled = (bool) ($pwa['push_enabled'] ?? false);
 
         return [
             'push_enabled' => $pushEnabled,
             'vapid_public' => $pushEnabled ? ($pwa['vapid_public'] ?? null) : null,
         ];
+    }
+
+    /**
+     * Config exibida na UI: cursos herdam branding PWA do HUB.
+     *
+     * @return array<string, mixed>
+     */
+    private function memberAreaConfigForView(Product $product): array
+    {
+        $config = $product->member_area_config;
+        $pwaContext = $this->memberAreaPwaAdminService->resolvePwaContextForProduct($product);
+
+        if ((string) $pwaContext['source']->id === (string) $product->id) {
+            return $config;
+        }
+
+        $config['pwa'] = array_replace($config['pwa'] ?? [], $pwaContext['pwa']);
+        if (! empty($pwaContext['logos']['favicon'])) {
+            $config['logos'] = array_replace($config['logos'] ?? [], [
+                'favicon' => $pwaContext['logos']['favicon'],
+            ]);
+        }
+        if (! empty($pwaContext['theme']['background'])) {
+            $config['theme'] = array_replace($config['theme'] ?? [], [
+                'background' => $pwaContext['theme']['background'],
+            ]);
+        }
+
+        return $config;
     }
 
     /** @return array{gamification_achievements: array} */
@@ -1118,7 +1183,7 @@ class MemberAreaAppController extends Controller
             $moduleForMeta = $wrapper ?? $lesson->module;
             $moduleThumbnail = null;
             if ($moduleForMeta && $moduleForMeta->thumbnail) {
-                $moduleThumbnail = str_starts_with($moduleForMeta->thumbnail, 'http') ? $moduleForMeta->thumbnail : (new StorageService($product->tenant_id))->url($moduleForMeta->thumbnail);
+                $moduleThumbnail = (new StorageService($product->tenant_id))->resolvePublicUrl($moduleForMeta->thumbnail);
             }
             $items[] = [
                 'lesson_id' => $lesson->id,
@@ -1421,6 +1486,15 @@ class MemberAreaAppController extends Controller
             ->first();
     }
 
+    private function resolveModuleThumbnail(Product $product, ?string $thumbnail): ?string
+    {
+        if ($thumbnail === null || trim($thumbnail) === '') {
+            return null;
+        }
+
+        return (new StorageService($product->tenant_id))->resolvePublicUrl($thumbnail);
+    }
+
     /**
      * @param  array<int|string, true>  $completedLessonIds
      */
@@ -1429,10 +1503,13 @@ class MemberAreaAppController extends Controller
         $sectionType = $s->section_type ?? 'courses';
 
         if ($sectionType === 'courses') {
+            $coverUrl = $this->resolveModuleThumbnail($product, $m->thumbnail);
+
             return [
                 'id' => $m->id,
                 'title' => $m->title,
-                'thumbnail' => $m->thumbnail,
+                'thumbnail' => $coverUrl,
+                'thumbnail_url' => $coverUrl,
                 'show_title_on_cover' => $m->show_title_on_cover ?? true,
                 ...$this->moduleLockPayload($m, $accessStartAt, $now),
                 'lessons' => $m->lessons->map(fn (MemberLesson $l) => [
@@ -1461,14 +1538,23 @@ class MemberAreaAppController extends Controller
                 $deliverableLink = $raw !== '' ? $raw : null;
             }
 
+            $storage = new StorageService($product->tenant_id);
+            $coverUrl = $storage->resolvePublicUrl($m->thumbnail);
+            if (! $coverUrl && $related?->image) {
+                $coverUrl = $storage->url($related->image);
+            }
+
             return [
                 'id' => $m->id,
                 'title' => $m->title,
-                'thumbnail' => $m->thumbnail,
+                'subtitle' => $m->subtitle,
+                'thumbnail' => $coverUrl,
+                'thumbnail_url' => $coverUrl,
                 'show_title_on_cover' => $m->show_title_on_cover ?? true,
                 'related_product_id' => $m->related_product_id,
                 'source_member_module_id' => $m->source_member_module_id,
                 'access_type' => $accessType,
+                'external_url' => $m->external_url,
                 'embed' => $canOpenEmbed,
                 'related_product' => $related ? [
                     'id' => $related->id,
@@ -1488,7 +1574,7 @@ class MemberAreaAppController extends Controller
         return [
             'id' => $m->id,
             'title' => $m->title,
-            'thumbnail' => $m->thumbnail,
+            'thumbnail' => (new StorageService($product->tenant_id))->resolvePublicUrl($m->thumbnail),
             'show_title_on_cover' => $m->show_title_on_cover ?? true,
             'external_url' => $m->external_url,
         ];
@@ -1614,11 +1700,13 @@ class MemberAreaAppController extends Controller
         }
         $slug = $slug ?? $request->route('slug') ?? $request->attributes->get('member_area_slug');
         $baseUrl = rtrim($this->baseUrlForRequest($product, $request), '/');
-        $config = $product->member_area_config;
-        $pwa = $config['pwa'] ?? [];
-        $logos = $config['logos'] ?? [];
-        $name = $pwa['name'] ?: $product->name;
-        $shortName = $pwa['short_name'] ?: $name;
+        $pwaContext = $this->memberAreaPwaAdminService->resolvePwaContextForProduct($product);
+        $pwa = $pwaContext['pwa'];
+        $logos = $pwaContext['logos'];
+        $theme = $pwaContext['theme'];
+        $pwaSource = $pwaContext['source'];
+        $name = trim((string) ($pwa['name'] ?? '')) ?: $pwaSource->name;
+        $shortName = trim((string) ($pwa['short_name'] ?? '')) ?: $name;
         $themeColor = $pwa['theme_color'] ?? '#0ea5e9';
 
         $icons = [];
@@ -1663,18 +1751,21 @@ class MemberAreaAppController extends Controller
             'start_url' => $baseUrl,
             'scope' => $baseUrl.'/',
             'display' => 'standalone',
-            'background_color' => $config['theme']['background'] ?? '#18181b',
+            'background_color' => $theme['background'] ?? '#18181b',
             'theme_color' => $themeColor,
             'icons' => $icons,
         ];
 
-        return response()->json($manifest)->header('Content-Type', 'application/manifest+json');
+        return response()->json($manifest)
+            ->header('Content-Type', 'application/manifest+json')
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            ->header('Pragma', 'no-cache');
     }
 
     private function baseUrlForRequest(Product $product, Request $request): string
     {
         $accessType = $request->attributes->get('member_area_access_type');
-        if (in_array($accessType, ['subdomain', 'custom'], true)) {
+        if (in_array($accessType, ['subdomain', 'custom', 'hub_root'], true)) {
             return rtrim($request->getSchemeAndHttpHost(), '/');
         }
 

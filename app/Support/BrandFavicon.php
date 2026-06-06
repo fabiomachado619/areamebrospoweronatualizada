@@ -134,7 +134,7 @@ class BrandFavicon
             return route('brand.favicon', ['v' => filemtime($default)]);
         }
 
-        return 'https://cdn.getfy.cloud/collapsed-logo.png';
+        return url('/brand/favicon-32x32.png');
     }
 
     public static function serve(): SymfonyResponse
@@ -154,7 +154,7 @@ class BrandFavicon
 
         $path = self::optimizedPath() ?? self::sourcePath() ?? self::defaultPublicPath();
         if ($path === null) {
-            return redirect('https://cdn.getfy.cloud/collapsed-logo.png', 302);
+            return redirect(url('/brand/favicon-32x32.png'), 302);
         }
 
         $mime = match (strtolower(pathinfo($path, PATHINFO_EXTENSION))) {
