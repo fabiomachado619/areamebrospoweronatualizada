@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import Button from '@/components/ui/Button.vue';
 import {
-    Copy, Check, Plus, Pencil, RefreshCw, Webhook, Eye, X,
+    Copy, Check, Plus, Pencil, RefreshCw, Webhook, Eye, X, Layers,
 } from 'lucide-vue-next';
 
 const props = defineProps({
@@ -25,7 +25,14 @@ const toast = ref(null);
 const payloadModal = ref(null);
 const copiedKey = ref('');
 
-const examplePayload = `{
+const selectedFormatId = ref('canonical');
+
+const supportedFormats = [
+    {
+        id: 'canonical',
+        label: 'Padrão / manual',
+        hint: 'Formato canônico (flat). Ideal para n8n, scripts ou integrações customizadas.',
+        example: `{
   "name": "Nome do Aluno",
   "email": "email@exemplo.com",
   "phone": "5599999999999",
@@ -35,7 +42,114 @@ const examplePayload = `{
   "transaction_id": "abc123",
   "status": "approved",
   "send_access_email": true
-}`;
+}`,
+    },
+    {
+        id: 'notascast',
+        label: 'Notascast',
+        hint: 'Detectado automaticamente quando o corpo contém name, email e whatsapp.',
+        example: `{
+  "name": "Nome do aluno",
+  "email": "email@exemplo.com",
+  "whatsapp": "+5565999999999"
+}`,
+    },
+    {
+        id: 'kiwify',
+        label: 'Kiwify',
+        hint: 'Detectado pela estrutura order_id, webhook_event_type, Customer e Product.',
+        example: `{
+  "order_id": "74821822-d31c-47ca-adf0-77ba9f27fc52",
+  "order_status": "paid",
+  "webhook_event_type": "order_approved",
+  "Product": {
+    "product_id": "c83d92c4-2b4a-4e65-8709-53c07a3f636e",
+    "product_name": "Example product"
+  },
+  "Customer": {
+    "full_name": "John Doe",
+    "email": "johndoe@example.com",
+    "mobile": "+5511999999999",
+    "CPF": "91969350230"
+  }
+}`,
+    },
+    {
+        id: 'hotmart',
+        label: 'Hotmart',
+        hint: 'Detectado pelo envelope event + data.purchase + data.buyer.',
+        example: `{
+  "event": "PURCHASE_COMPLETE",
+  "data": {
+    "product": {
+      "ucode": "fb056612-bcc6-4217-9e6d-2a5d1110ac2f",
+      "name": "Produto exemplo"
+    },
+    "purchase": {
+      "transaction": "HP16015479281022",
+      "status": "COMPLETED"
+    },
+    "buyer": {
+      "name": "Teste Comprador",
+      "email": "comprador@example.com",
+      "checkout_phone": "99999999900",
+      "document": "69526128664"
+    }
+  }
+}`,
+    },
+    {
+        id: 'wiapy',
+        label: 'Wiapy',
+        hint: 'Detectado pela estrutura data.payment, data.customer e data.products.',
+        example: `{
+  "data": {
+    "payment": {
+      "id": "6a0f8466a3c7521472cb78ab",
+      "status": "paid"
+    },
+    "customer": {
+      "name": "Thiago Rodrigues",
+      "email": "cliente@example.com",
+      "mobile_phone": "(19) 99181-1735",
+      "document": "340.884.208-61"
+    },
+    "products": [
+      {
+        "id": "69e243c177c2484f353adbaa",
+        "title": "Curso exemplo"
+      }
+    ]
+  }
+}`,
+    },
+    {
+        id: 'poweron',
+        label: 'Plataforma Power On',
+        hint: 'Detectado pelo envelope event + payload (pedido_pago, customer, product).',
+        example: `{
+  "event": "pedido_pago",
+  "event_label": "Pedido pago",
+  "payload": {
+    "order": { "id": 90001, "status": "completed" },
+    "customer": {
+      "name": "Cliente Exemplo",
+      "email": "exemplo@email.com",
+      "phone": "5511999999999",
+      "docNumber": "12345678900"
+    },
+    "status": "paid",
+    "payment": { "gateway_transaction_id": "tx_exemplo_123" },
+    "product": {
+      "id": "prod-exemplo-uuid",
+      "name": "MeuLink - Full Anual"
+    }
+  }
+}`,
+    },
+];
+
+const selectedFormat = computed(() => supportedFormats.find((f) => f.id === selectedFormatId.value) ?? supportedFormats[0]);
 
 const emptyForm = () => ({
     name: '',
@@ -170,6 +284,51 @@ watch(() => props.webhookLogs, (v) => { logs.value = [...v]; }, { deep: true });
             </div>
         </div>
 
+        <!-- Formatos aceitos -->
+        <section class="panel-card-md space-y-4">
+            <div class="flex items-center gap-2">
+                <Layers class="h-5 w-5 text-[var(--color-primary)]" />
+                <h2 class="text-base font-semibold text-zinc-900 dark:text-white">Formatos de payload aceitos</h2>
+            </div>
+            <p class="text-sm text-zinc-600 dark:text-zinc-400">
+                O sistema detecta e normaliza automaticamente o JSON recebido. Você pode enviar o payload nativo da plataforma
+                (Notascast, Kiwify, Hotmart, Wiapy ou Power On) ou usar o formato padrão/manual — sem converter manualmente no n8n.
+            </p>
+            <div class="flex flex-wrap gap-2">
+                <button
+                    v-for="format in supportedFormats"
+                    :key="format.id"
+                    type="button"
+                    class="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+                    :class="selectedFormatId === format.id
+                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                        : 'border-zinc-300 text-zinc-600 hover:border-zinc-400 dark:border-zinc-600 dark:text-zinc-300 dark:hover:border-zinc-500'"
+                    @click="selectedFormatId = format.id"
+                >
+                    {{ format.label }}
+                </button>
+            </div>
+            <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <p class="text-xs font-medium uppercase text-zinc-500">Exemplo — {{ selectedFormat.label }}</p>
+                        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{{ selectedFormat.hint }}</p>
+                    </div>
+                    <Button variant="outline" size="sm" @click="copyText(selectedFormat.example, 'format-example')">
+                        <Check v-if="copiedKey === 'format-example'" class="h-3.5 w-3.5" />
+                        <Copy v-else class="h-3.5 w-3.5" />
+                        Copiar exemplo
+                    </Button>
+                </div>
+                <pre class="mt-3 overflow-x-auto text-xs text-zinc-800 dark:text-zinc-200">{{ selectedFormat.example }}</pre>
+            </div>
+            <ul class="space-y-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <li><strong class="font-medium text-zinc-700 dark:text-zinc-300">E-mail obrigatório</strong> — sem e-mail o webhook retorna erro 422 e registra log.</li>
+                <li><strong class="font-medium text-zinc-700 dark:text-zinc-300">Pagamento pendente</strong> — eventos não aprovados são ignorados (HTTP 200) sem matricular.</li>
+                <li><strong class="font-medium text-zinc-700 dark:text-zinc-300">Curso vinculado</strong> — como cada webhook já aponta para um curso, <code>course_id</code> no JSON é opcional.</li>
+            </ul>
+        </section>
+
         <!-- Integração n8n -->
         <section class="panel-card-md space-y-4">
             <div class="flex items-center gap-2">
@@ -177,7 +336,7 @@ watch(() => props.webhookLogs, (v) => { logs.value = [...v]; }, { deep: true });
                 <h2 class="text-base font-semibold text-zinc-900 dark:text-white">Integração n8n</h2>
             </div>
             <p class="text-sm text-zinc-600 dark:text-zinc-400">
-                Cada webhook possui uma URL única. Copie a URL do webhook desejado e cole no n8n como destino HTTP POST — sem headers de autenticação.
+                Cada webhook possui uma URL única. Copie a URL do webhook desejado e cole no n8n (ou na plataforma externa) como destino HTTP POST — sem headers de autenticação.
             </p>
             <div class="grid gap-4 md:grid-cols-2">
                 <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50">
@@ -190,13 +349,10 @@ watch(() => props.webhookLogs, (v) => { logs.value = [...v]; }, { deep: true });
                     <p class="mt-2 text-xs text-zinc-500">Não é necessário Authorization, X-Signature ou HMAC.</p>
                 </div>
             </div>
-            <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50">
-                <p class="text-xs font-medium uppercase text-zinc-500">Exemplo de JSON para o n8n</p>
-                <pre class="mt-2 overflow-x-auto text-xs text-zinc-800 dark:text-zinc-200">{{ examplePayload }}</pre>
-                <p class="mt-2 text-xs text-zinc-500">
-                    Como o webhook já está vinculado a um curso, o n8n não precisa enviar <code>course_id</code> (opcional).
-                </p>
-            </div>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400">
+                Use os exemplos da seção <strong class="font-medium text-zinc-700 dark:text-zinc-300">Formatos de payload aceitos</strong> acima.
+                No n8n, repasse o JSON original da plataforma ou monte o payload padrão/manual.
+            </p>
         </section>
 
         <!-- Lista + form -->
