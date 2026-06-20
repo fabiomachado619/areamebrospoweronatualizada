@@ -52,9 +52,13 @@ class ProdutosController extends Controller
         $tenantId = auth()->user()->tenant_id;
         $tenantCurrencies = $this->tenantCurrenciesFor($tenantId);
         $query = Product::forTenant($tenantId)->orderBy('name');
-        if (auth()->user()->isTeam()) {
-            $allowed = app(TeamAccessService::class)->allowedProductIdsFor(auth()->user());
-            $query->whereIn('id', $allowed ?: ['__none__']);
+        $user = auth()->user();
+        if ($user?->isTeam()) {
+            $teamAccess = app(TeamAccessService::class);
+            if (! $teamAccess->can($user, 'produtos.view')) {
+                $allowed = $teamAccess->allowedProductIdsFor($user);
+                $query->whereIn('id', $allowed ?: ['__none__']);
+            }
         }
         $products = $query->paginate(20)->withQueryString()->through(fn (Product $p) => $this->productToArray($p, $tenantCurrencies));
 

@@ -86,6 +86,34 @@ class EnrollmentWebhookService
     }
 
     /**
+     * Registra webhook recebido sem executar matrícula (ex.: e-mail ausente, evento ignorado).
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function logInboundOnly(
+        int $tenantId,
+        array $payload,
+        ?EnrollmentWebhookCredential $credential,
+        string $logAction,
+        ?string $message = null,
+        bool $success = true,
+    ): array {
+        $normalized = $this->normalizePayload($payload);
+        $this->writeLog($tenantId, $normalized, $logAction, false, $message, null, null, $credential);
+
+        $responseAction = $logAction === EnrollmentWebhookLog::ACTION_ERROR ? 'error' : EnrollmentWebhookLog::ACTION_IGNORED;
+
+        return [
+            'success' => $success,
+            'action' => $responseAction,
+            'duplicate' => false,
+            'email_sent' => false,
+            'message' => $message,
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */

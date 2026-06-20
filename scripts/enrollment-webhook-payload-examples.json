@@ -1,0 +1,118 @@
+{
+  "description": "Exemplos de payload para teste manual do webhook de matrícula da Área de Membros.",
+  "endpoint_pattern": "/api/webhooks/enrollment/{webhook_key}",
+  "examples": {
+    "notascast": {
+      "body": {
+        "name": "fabio machado",
+        "whatsapp": "+5565992976877",
+        "email": "ciepoweron@gmail.com"
+      }
+    },
+    "poweron": {
+      "body": {
+        "event": "pedido_pago",
+        "event_label": "Pedido pago",
+        "payload": {
+          "order": {
+            "id": 90001,
+            "status": "completed"
+          },
+          "customer": {
+            "name": "Cliente Exemplo",
+            "email": "exemplo@email.com",
+            "phone": "5511999999999",
+            "docNumber": "12345678900",
+            "docType": "cpf"
+          },
+          "status": "paid",
+          "payment": {
+            "gateway_transaction_id": "tx_exemplo_123"
+          },
+          "product": {
+            "id": "prod-exemplo-uuid",
+            "name": "MeuLink - Full Anual"
+          }
+        }
+      }
+    },
+    "kiwify": {
+      "body": {
+        "order_id": "74821822-d31c-47ca-adf0-77ba9f27fc52",
+        "order_status": "paid",
+        "webhook_event_type": "order_approved",
+        "Product": {
+          "product_id": "c83d92c4-2b4a-4e65-8709-53c07a3f636e",
+          "product_name": "Example product"
+        },
+        "Customer": {
+          "full_name": "John Doe",
+          "email": "johndoe@example.com",
+          "mobile": "+48196290118",
+          "CPF": "91969350230"
+        }
+      }
+    },
+    "wiapy": {
+      "data": {
+        "payment": {
+          "id": "6a0f8466a3c7521472cb78ab",
+          "status": "paid",
+          "amount": 9790,
+          "payment_method": "pix"
+        },
+        "customer": {
+          "name": "Thiago Rodrigues",
+          "email": "thiagorodrigues386@gmail.com",
+          "mobile_phone": "(19) 99181-1735",
+          "document": "340.884.208-61"
+        },
+        "checkout": {
+          "id": "69e2454d77c2484f353b5e23",
+          "title": "Scripts UPA Atualizados 2025.2"
+        },
+        "products": [
+          {
+            "id": "69e243c177c2484f353adbaa",
+            "title": "Scripts UPA Atualizados 2025.2 -POWER ON"
+          }
+        ]
+      }
+    },
+    "hotmart": {
+      "body": {
+        "data": {
+          "product": {
+            "id": 0,
+            "ucode": "fb056612-bcc6-4217-9e6d-2a5d1110ac2f",
+            "name": "Produto test postback2"
+          },
+          "purchase": {
+            "transaction": "HP16015479281022",
+            "status": "COMPLETED"
+          },
+          "buyer": {
+            "name": "Teste Comprador",
+            "first_name": "Teste",
+            "last_name": "Comprador",
+            "email": "testeComprador271101postman15@example.com",
+            "checkout_phone": "99999999900",
+            "document": "69526128664"
+          }
+        },
+        "event": "PURCHASE_COMPLETE"
+      }
+    },
+    "canonical": {
+      "name": "Nome do Aluno",
+      "email": "email@exemplo.com",
+      "phone": "559999999999",
+      "document": "00000000000",
+      "platform": "kiwify",
+      "event": "purchase_approved",
+      "transaction_id": "abc123",
+      "status": "approved",
+      "send_access_email": true
+    }
+  }
+}

@@ -112,6 +112,15 @@ class TeamAccessService
             return [];
         }
 
+        if ($this->can($user, 'produtos.view')) {
+            $tenantId = $user->tenant_id;
+            if ($tenantId === null) {
+                return [];
+            }
+
+            return Product::forTenant($tenantId)->pluck('id')->all();
+        }
+
         return $user->teamRole?->products()->pluck('products.id')->all() ?? [];
     }
 

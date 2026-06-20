@@ -475,7 +475,7 @@ function confirmClearLogs() {
                         <div class="rounded-lg border border-zinc-200 dark:border-zinc-700 p-4">
                             <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Produtos permitidos</h3>
                             <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                                Afeta todos os módulos por produto (Dashboard, Vendas, Produtos, etc.).
+                                Restringe Dashboard, Vendas e demais módulos sem permissão de Produtos. Com &quot;Produtos&quot; marcado, o membro visualiza todos os produtos e cursos.
                             </p>
                             <div class="mt-3 max-h-[260px] overflow-auto space-y-2 pr-1">
                                 <label v-for="p in products" :key="p.id" class="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-200">

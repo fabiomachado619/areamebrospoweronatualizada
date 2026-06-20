@@ -108,7 +108,7 @@ class TeamAccessTest extends TestCase
                 ->where('vendas.data.0.product_id', $productA->id));
     }
 
-    public function test_team_user_cannot_edit_product_outside_allowed_list(): void
+    public function test_team_user_with_produtos_view_can_edit_any_product(): void
     {
         $this->withoutMiddleware(EnsureInstalled::class);
 
@@ -122,7 +122,7 @@ class TeamAccessTest extends TestCase
 
         $role = TeamRole::create([
             'tenant_id' => 1,
-            'name' => 'Produtos A',
+            'name' => 'Professor',
             'permissions' => [
                 'dashboard.view' => false,
                 'vendas.view' => false,
@@ -143,7 +143,82 @@ class TeamAccessTest extends TestCase
             'team_role_id' => $role->id,
         ]);
 
-        $this->actingAs($team)->get("/produtos/{$productB->id}/edit")->assertStatus(403);
+        $this->actingAs($team)->get("/produtos/{$productB->id}/edit")->assertOk();
+    }
+
+    public function test_team_user_with_produtos_view_can_create_product(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        User::factory()->create([
+            'role' => User::ROLE_INFOPRODUTOR,
+            'tenant_id' => 1,
+        ]);
+
+        $role = TeamRole::create([
+            'tenant_id' => 1,
+            'name' => 'Professor',
+            'permissions' => ['produtos.view' => true],
+        ]);
+
+        $team = User::factory()->create([
+            'role' => User::ROLE_TEAM,
+            'tenant_id' => 1,
+            'team_role_id' => $role->id,
+        ]);
+
+        $this->actingAs($team)
+            ->post('/produtos', [
+                'name' => 'Curso equipe',
+                'type' => \App\Models\Product::TYPE_AREA_MEMBROS,
+                'billing_type' => \App\Models\Product::BILLING_ONE_TIME,
+                'price' => 344,
+                'currency' => 'BRL',
+                'is_active' => true,
+            ])
+            ->assertRedirect(route('produtos.index'));
+
+        $this->assertDatabaseHas('products', [
+            'name' => 'Curso equipe',
+            'tenant_id' => 1,
+            'type' => \App\Models\Product::TYPE_AREA_MEMBROS,
+        ]);
+    }
+
+    public function test_team_user_with_produtos_view_sees_all_products_in_index(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        User::factory()->create([
+            'role' => User::ROLE_INFOPRODUTOR,
+            'tenant_id' => 1,
+        ]);
+
+        $productA = $this->createTestProduct(['tenant_id' => 1, 'name' => 'Produto A']);
+        $productB = $this->createTestProduct(['tenant_id' => 1, 'name' => 'Produto B']);
+
+        $role = TeamRole::create([
+            'tenant_id' => 1,
+            'name' => 'Professor',
+            'permissions' => [
+                'produtos.view' => true,
+            ],
+        ]);
+        $role->products()->sync([$productA->id]);
+
+        $team = User::factory()->create([
+            'role' => User::ROLE_TEAM,
+            'tenant_id' => 1,
+            'team_role_id' => $role->id,
+        ]);
+
+        $this->actingAs($team)
+            ->get('/produtos')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('produtos.data', 2)
+                ->where('produtos.data.0.id', $productA->id)
+                ->where('produtos.data.1.id', $productB->id));
     }
 
     public function test_creating_team_member_can_send_access_email(): void

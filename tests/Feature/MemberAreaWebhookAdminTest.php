@@ -398,4 +398,87 @@ class MemberAreaWebhookAdminTest extends TestCase
 
         Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
     }
+
+    public function test_notascast_body_format_enrolls_via_unique_url(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Notascast',
+            productId: $course->id,
+            platform: 'notascast',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'body' => [
+                'name' => 'fabio machado',
+                'whatsapp' => '+5565992976877',
+                'email' => 'notascast-'.uniqid().'@example.com',
+            ],
+        ]);
+
+        $response->assertOk()->assertJson(['success' => true, 'action' => 'enrolled']);
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class);
+    }
+
+    public function test_kiwify_body_format_enrolls_via_unique_url(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Kiwify',
+            productId: $course->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'body' => [
+                'order_id' => 'order-'.uniqid(),
+                'order_status' => 'paid',
+                'webhook_event_type' => 'order_approved',
+                'Product' => ['product_id' => 'ext-1', 'product_name' => 'Curso'],
+                'Customer' => [
+                    'full_name' => 'John Doe',
+                    'email' => 'kiwify-'.uniqid().'@example.com',
+                    'mobile' => '+5511999999999',
+                ],
+            ],
+        ]);
+
+        $response->assertOk()->assertJson(['success' => true, 'action' => 'enrolled']);
+    }
+
+    public function test_missing_email_returns_clear_error(): void
+    {
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Sem Email',
+            productId: $course->id,
+            platform: 'notascast',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'body' => [
+                'name' => 'Sem Email',
+                'whatsapp' => '+5565999999999',
+            ],
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+                'message' => 'E-mail não encontrado no payload.',
+            ]);
+    }
 }
