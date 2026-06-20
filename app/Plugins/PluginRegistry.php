@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 
 class PluginRegistry
 {
@@ -34,26 +35,129 @@ class PluginRegistry
     }
 
     /**
-     * Garante registro e ativação dos plugins nativos presentes em plugins/.
+     * Manifestos no disco dos plugins nativos (independente do registro no banco).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function coreBundledDiskPlugins(): array
+    {
+        $bySlug = self::collectDiskPluginsBySlug();
+        $rows = [];
+        foreach (self::coreBundledSlugs() as $slug) {
+            if (isset($bySlug[$slug])) {
+                $rows[] = $bySlug[$slug];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Garante registro, ativação e migrations pendentes dos plugins nativos presentes em plugins/.
      */
     public static function ensureCoreBundledRegistered(): void
     {
         if (! self::tableExists()) {
             return;
         }
-        foreach (self::coreBundledSlugs() as $slug) {
-            $installed = collect(self::installed())->firstWhere('slug', $slug);
-            if (! $installed) {
+        foreach (self::coreBundledDiskPlugins() as $plugin) {
+            $slug = (string) ($plugin['slug'] ?? '');
+            if ($slug === '') {
                 continue;
             }
             PluginModel::updateOrCreate(
                 ['slug' => $slug],
                 [
-                    'name' => $installed['name'],
-                    'version' => $installed['version'],
+                    'name' => $plugin['name'] ?? $slug,
+                    'version' => $plugin['version'] ?? '1.0.0',
                     'is_enabled' => true,
                 ]
             );
+            if (self::hasPendingPluginMigrations($plugin)) {
+                self::runPluginMigrations($plugin);
+            }
+        }
+    }
+
+    /**
+     * Caminho relativo ao projeto da pasta de migrations do plugin, ou null.
+     *
+     * @param  array<string, mixed>  $plugin
+     */
+    public static function pluginMigrationsRelativePath(array $plugin): ?string
+    {
+        $migrationsPath = $plugin['migrations'] ?? null;
+        if (! is_string($migrationsPath) || $migrationsPath === '') {
+            return null;
+        }
+        $fullPath = ($plugin['path'] ?? '').DIRECTORY_SEPARATOR.str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $migrationsPath);
+        if (! is_dir($fullPath)) {
+            return null;
+        }
+        $base = rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, base_path()), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
+        $full = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $fullPath);
+
+        return str_replace('\\', '/', Str::after($full, $base));
+    }
+
+    /**
+     * @param  array<string, mixed>  $plugin
+     */
+    public static function hasPendingPluginMigrations(array $plugin): bool
+    {
+        $relativePath = self::pluginMigrationsRelativePath($plugin);
+        if ($relativePath === null) {
+            return false;
+        }
+        try {
+            $migrator = app('migrator');
+            $fullPath = base_path(str_replace('/', DIRECTORY_SEPARATOR, $relativePath));
+            if (! is_dir($fullPath)) {
+                return false;
+            }
+            $files = $migrator->getMigrationFiles([$fullPath]);
+            if (! is_array($files) || $files === []) {
+                return false;
+            }
+            $ran = $migrator->getRepository()->getRan();
+            if (! is_array($ran)) {
+                $ran = [];
+            }
+            foreach (array_keys($files) as $name) {
+                if (! in_array($name, $ran, true)) {
+                    return true;
+                }
+            }
+        } catch (\Throwable) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Executa migrations pendentes de um plugin (mesmo fluxo do botão Instalar).
+     *
+     * @param  array<string, mixed>  $plugin
+     */
+    public static function runPluginMigrations(array $plugin): bool
+    {
+        $relativePath = self::pluginMigrationsRelativePath($plugin);
+        if ($relativePath === null) {
+            return true;
+        }
+        try {
+            Artisan::call('migrate', ['--path' => $relativePath, '--force' => true]);
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::warning('Getfy: migrations do plugin falharam.', [
+                'slug' => $plugin['slug'] ?? null,
+                'path' => $relativePath,
+                'message' => $e->getMessage(),
+            ]);
+
+            return false;
         }
     }
 
@@ -329,12 +433,16 @@ class PluginRegistry
         $result = [];
         foreach (self::collectDiskPluginsBySlug() as $slug => $row) {
             $record = $dbPlugins[$slug] ?? null;
-            $isRegistered = $record !== null;
-            $isEnabled = $record ? $record->is_enabled : false;
+            $isCoreBundled = self::isCoreBundled($slug);
+            $isRegistered = $record !== null || $isCoreBundled;
+            $isEnabled = $isCoreBundled
+                ? true
+                : ($record ? (bool) $record->is_enabled : false);
 
             $result[] = array_merge($row, [
                 'is_registered' => $isRegistered,
-                'is_enabled' => (bool) $isEnabled,
+                'is_enabled' => $isEnabled,
+                'is_core_bundled' => $isCoreBundled,
             ]);
         }
 

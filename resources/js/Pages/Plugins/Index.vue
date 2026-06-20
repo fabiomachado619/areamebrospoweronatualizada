@@ -475,7 +475,7 @@ function submitManualInstall() {
 
                             <div class="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
                                 <span
-                                    v-if="!plugin.is_registered"
+                                    v-if="!plugin.is_registered && !plugin.is_core_bundled"
                                     class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium bg-amber-500/15 text-amber-800 dark:text-amber-300"
                                 >
                                     Pendente
@@ -528,7 +528,7 @@ function submitManualInstall() {
                                         <Trash2 class="h-3.5 w-3.5" />
                                     </Button>
                                 </template>
-                                <template v-else>
+                                <template v-else-if="!plugin.is_core_bundled">
                                     <Button
                                         size="sm"
                                         :disabled="registeringSlug === plugin.slug"

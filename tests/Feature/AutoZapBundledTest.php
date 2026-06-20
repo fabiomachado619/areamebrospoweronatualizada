@@ -8,6 +8,7 @@ use App\Models\Plugin;
 use App\Models\User;
 use App\Plugins\PluginRegistry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Plugins\AutoZap\AutoZapEventSubscriber;
@@ -89,6 +90,22 @@ class AutoZapBundledTest extends TestCase
         $record = Plugin::find('autozap');
         $this->assertNotNull($record);
         $this->assertTrue($record->is_enabled);
+    }
+
+    public function test_core_bundled_autozap_runs_pending_migrations_on_register(): void
+    {
+        Schema::dropIfExists('autozap_flow_runs');
+        Schema::dropIfExists('autozap_flows');
+        Schema::dropIfExists('autozap_connections');
+        Plugin::where('slug', 'autozap')->delete();
+        DB::table('migrations')->where('migration', 'like', '%autozap%')->delete();
+
+        PluginRegistry::ensureCoreBundledRegistered();
+
+        $this->assertNotNull(Plugin::find('autozap'));
+        $this->assertTrue(Schema::hasTable('autozap_connections'));
+        $this->assertTrue(Schema::hasTable('autozap_flows'));
+        $this->assertTrue(Schema::hasTable('autozap_flow_runs'));
     }
 
     public function test_autozap_migrations_created_expected_tables(): void

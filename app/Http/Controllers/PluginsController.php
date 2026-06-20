@@ -6,9 +6,7 @@ use App\Plugins\PluginRegistry;
 use App\Services\PluginStoreService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\URL;
-use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -103,24 +101,12 @@ class PluginsController extends Controller
         }
 
         $plugin = $installed->get($slug);
-        $migrationsPath = $plugin['migrations'] ?? null;
 
         if (! PluginRegistry::register($slug)) {
             return redirect()->route('plugins.index')->with('error', 'Não foi possível registrar o plugin.');
         }
-        if (is_string($migrationsPath) && $migrationsPath !== '') {
-            $fullPath = $plugin['path'].DIRECTORY_SEPARATOR.str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $migrationsPath);
-            if (is_dir($fullPath)) {
-                $base = rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, base_path()), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
-                $full = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $fullPath);
-                $relativePath = str_replace('\\', '/', Str::after($full, $base));
-                try {
-                    Artisan::call('migrate', ['--path' => $relativePath, '--force' => true]);
-                } catch (\Throwable $e) {
-                    report($e);
-                    return redirect()->route('plugins.index')->with('error', 'Plugin registrado, mas as migrations falharam: '.$e->getMessage());
-                }
-            }
+        if (! PluginRegistry::runPluginMigrations($plugin)) {
+            return redirect()->route('plugins.index')->with('error', 'Plugin registrado, mas as migrations falharam. Verifique os logs.');
         }
 
         return redirect()->route('plugins.index')->with('success', 'Plugin instalado.');

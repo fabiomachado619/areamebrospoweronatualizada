@@ -30,6 +30,12 @@ class PluginServiceProvider extends ServiceProvider
     public function boot(): void
     {
         PluginRegistry::migrateLegacyPluginInstallDirectories();
+
+        // Migrations dos plugins nativos entram no migrator mesmo antes do registro no banco.
+        foreach (PluginRegistry::coreBundledDiskPlugins() as $plugin) {
+            $this->loadPluginMigrations($plugin);
+        }
+
         PluginRegistry::ensureCoreBundledRegistered();
 
         $plugins = $this->getPluginsToLoad();
