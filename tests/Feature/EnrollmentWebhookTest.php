@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\EnrollmentExternalProductMapping;
 use App\Models\EnrollmentWebhookCredential;
+use App\Models\EnrollmentWebhookLog;
 use App\Models\MemberLesson;
 use App\Models\MemberLessonProgress;
 use App\Models\MemberModule;
@@ -180,6 +181,7 @@ class EnrollmentWebhookTest extends TestCase
                 'action' => 'enrolled',
                 'user_id' => $aluno->id,
                 'course_id' => (string) $courseB->id,
+                'email_sent' => true,
                 'duplicate' => false,
             ]);
 
@@ -188,6 +190,52 @@ class EnrollmentWebhookTest extends TestCase
         $this->assertSame($oldHash, $aluno->password);
         $this->assertTrue($courseB->users()->where('users.id', $aluno->id)->exists());
         Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+    }
+
+    public function test_same_course_with_different_transaction_returns_duplicate_without_email(): void
+    {
+        Mail::fake();
+
+        $course = $this->createMemberCourse();
+        $email = 'same-course-'.uniqid().'@example.com';
+
+        $this->postEnrollment([
+            'email' => $email,
+            'name' => 'Mesmo Curso',
+            'course_id' => $course->id,
+            'transaction_id' => 'tx-first-'.uniqid(),
+        ])->assertOk()->assertJson([
+            'action' => 'enrolled',
+            'email_sent' => true,
+            'duplicate' => false,
+        ]);
+
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+
+        $response = $this->postEnrollment([
+            'email' => $email,
+            'name' => 'Mesmo Curso',
+            'course_id' => $course->id,
+            'transaction_id' => 'tx-second-'.uniqid(),
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => EnrollmentWebhookLog::ACTION_DUPLICATE,
+                'duplicate' => true,
+                'email_sent' => false,
+                'message' => 'Aluno já possuía acesso ao curso',
+            ]);
+
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+
+        $this->assertDatabaseHas('enrollment_webhook_logs', [
+            'email' => $email,
+            'course_id' => $course->id,
+            'action' => EnrollmentWebhookLog::ACTION_DUPLICATE,
+            'email_sent' => false,
+        ]);
     }
 
     public function test_duplicate_event_does_not_resend_email(): void

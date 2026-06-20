@@ -140,6 +140,41 @@ class MemberAreaAccessEmailTest extends TestCase
         });
     }
 
+    public function test_send_for_enrollment_access_notifies_existing_student_for_additional_course(): void
+    {
+        Mail::fake();
+
+        $ctx = $this->createHubAndCourse();
+        $otherCourseSlug = 'out'.substr(uniqid('', true), -8);
+        $otherCourse = $this->createTestProduct([
+            'type' => Product::TYPE_AREA_MEMBROS,
+            'checkout_slug' => $otherCourseSlug,
+            'name' => 'Curso Anterior',
+            'member_hub_product_id' => $ctx['hub']->id,
+        ]);
+
+        $user = User::factory()->create([
+            'email' => 'existing-webhook@test.local',
+            'role' => User::ROLE_ALUNO,
+            'tenant_id' => 1,
+        ]);
+        $otherCourse->users()->attach($user->id);
+
+        $this->assertTrue(app(AccessEmailService::class)->sendForEnrollmentAccess(
+            $user,
+            $ctx['course'],
+            null,
+        ));
+
+        Mail::assertSent(AccessGrantedMail::class, function (AccessGrantedMail $mail) use ($ctx) {
+            return str_contains($mail->subjectLine, 'Novo treinamento liberado')
+                && str_contains($mail->subjectLine, $ctx['course']->name)
+                && str_contains($mail->htmlBody, '/m/'.$ctx['hubSlug'].'/login')
+                && str_contains($mail->htmlBody, $ctx['course']->name)
+                && ! str_contains($mail->htmlBody, 'Senha inicial:');
+        });
+    }
+
     public function test_send_for_user_product_includes_password_when_provided(): void
     {
         Mail::fake();
