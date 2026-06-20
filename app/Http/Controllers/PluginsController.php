@@ -34,6 +34,7 @@ class PluginsController extends Controller
                 'category' => $p['category'] ?? 'outros',
                 'is_registered' => $p['is_registered'] ?? false,
                 'is_enabled' => $p['is_enabled'],
+                'is_core_bundled' => PluginRegistry::isCoreBundled($p['slug']),
                 'settings_url' => $p['routes'] ? '/'.$p['slug'] : null,
             ];
         }, $plugins);

@@ -19,6 +19,45 @@ class PluginRegistry
     }
 
     /**
+     * Plugins nativos versionados no repositório — sempre ativos e não desinstaláveis.
+     *
+     * @return list<string>
+     */
+    public static function coreBundledSlugs(): array
+    {
+        return ['autozap'];
+    }
+
+    public static function isCoreBundled(string $slug): bool
+    {
+        return in_array($slug, self::coreBundledSlugs(), true);
+    }
+
+    /**
+     * Garante registro e ativação dos plugins nativos presentes em plugins/.
+     */
+    public static function ensureCoreBundledRegistered(): void
+    {
+        if (! self::tableExists()) {
+            return;
+        }
+        foreach (self::coreBundledSlugs() as $slug) {
+            $installed = collect(self::installed())->firstWhere('slug', $slug);
+            if (! $installed) {
+                continue;
+            }
+            PluginModel::updateOrCreate(
+                ['slug' => $slug],
+                [
+                    'name' => $installed['name'],
+                    'version' => $installed['version'],
+                    'is_enabled' => true,
+                ]
+            );
+        }
+    }
+
+    /**
      * Pasta persistente para instalações via ZIP/loja.
      *
      * Em Docker (GETFY_DOCKER=true): `.docker/plugins-installed` — fica no volume `getfy_env` montado em `.docker/`,
@@ -627,6 +666,9 @@ class PluginRegistry
 
     public static function disable(string $slug): bool
     {
+        if (self::isCoreBundled($slug)) {
+            return false;
+        }
         if (! self::tableExists()) {
             return false;
         }
@@ -670,6 +712,10 @@ class PluginRegistry
      */
     public static function uninstall(string $slug, ?string $pluginPath = null): bool
     {
+        if (self::isCoreBundled($slug)) {
+            return false;
+        }
+
         $pluginDir = $pluginPath !== null && $pluginPath !== ''
             ? realpath($pluginPath)
             : realpath(self::userInstallRoot().DIRECTORY_SEPARATOR.$slug);
@@ -825,7 +871,7 @@ class PluginRegistry
             return;
         }
         foreach (self::installed() as $p) {
-            PluginModel::firstOrCreate(
+            $record = PluginModel::firstOrCreate(
                 ['slug' => $p['slug']],
                 [
                     'name' => $p['name'],
@@ -833,6 +879,9 @@ class PluginRegistry
                     'is_enabled' => true,
                 ]
             );
+            if (self::isCoreBundled($p['slug']) && ! $record->is_enabled) {
+                $record->update(['is_enabled' => true]);
+            }
         }
     }
 

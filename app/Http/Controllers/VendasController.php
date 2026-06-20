@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\AccessDeliveryReady;
 use App\Events\OrderCompleted;
 use App\Events\OrderStatusChanged;
 use App\Events\SubscriptionRenewed;
@@ -511,6 +512,11 @@ class VendasController extends Controller
         $tenantId = auth()->user()->tenant_id;
         if ($order->tenant_id !== $tenantId) {
             return response()->json(['success' => false, 'message' => 'Pedido não encontrado.'], 404);
+        }
+
+        $access = $accessEmailService->getAccessDataForOrder($order);
+        if (is_array($access)) {
+            AccessDeliveryReady::dispatch($order, $access);
         }
 
         if ($accessEmailService->sendForOrder($order, true)) {

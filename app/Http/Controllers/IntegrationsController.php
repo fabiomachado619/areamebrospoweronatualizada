@@ -234,6 +234,9 @@ class IntegrationsController extends Controller
         if (! $installed->has($slug)) {
             return back()->with('error', 'Plugin não encontrado.');
         }
+        if (PluginRegistry::isCoreBundled($slug)) {
+            return back()->with('error', 'O AutoZap é nativo do sistema e não pode ser desativado.');
+        }
         PluginRegistry::disable($slug);
         return back()->with('success', 'Plugin desativado.');
     }
@@ -244,6 +247,9 @@ class IntegrationsController extends Controller
         $plugin = $installed->get($slug);
         if (! $plugin) {
             return back()->with('error', 'Plugin não encontrado.');
+        }
+        if (PluginRegistry::isCoreBundled($slug)) {
+            return back()->with('error', 'O AutoZap é nativo do sistema e não pode ser excluído.');
         }
         $pluginPath = $plugin['path'] ?? null;
         if (! PluginRegistry::uninstall($slug, $pluginPath)) {

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\MemberAccessGranted;
 use App\Mail\AccessGrantedMail;
 use App\Models\Order;
 use App\Models\Product;
@@ -336,6 +337,55 @@ class AccessEmailService
     }
 
     /**
+     * Build access data for WhatsApp when access is granted without an order (matrícula, cadastro manual).
+     *
+     * @return array{type:string, link:string, email:string, password:string, product_type:string}|null
+     */
+    public function getAccessDataForUserProduct(User $user, Product $product, ?string $plainPassword = null): ?array
+    {
+        if ($product->type === Product::TYPE_LINK_PAGAMENTO) {
+            return null;
+        }
+
+        $email = (string) ($user->email ?? '');
+        $link = $this->resolveAccessUrl($user, $product);
+        if ($link === '' || $email === '') {
+            return null;
+        }
+
+        $password = (string) ($plainPassword ?? '');
+        if ($password === '' && $product->type === Product::TYPE_AREA_MEMBROS) {
+            $cached = Cache::get('access_password.'.$user->id.'.'.$product->id);
+            if (is_string($cached) && $cached !== '') {
+                $password = $cached;
+            }
+        }
+
+        $type = $product->type === Product::TYPE_AREA_MEMBROS
+            ? 'member_area'
+            : ($product->type === Product::TYPE_LINK ? 'link' : 'generic');
+
+        return [
+            'type' => $type,
+            'link' => $link,
+            'email' => $email,
+            'password' => $password,
+            'product_type' => (string) $product->type,
+        ];
+    }
+
+    /**
+     * Dispara AutoZap (WhatsApp) para liberação de acesso sem pedido.
+     */
+    public function dispatchMemberAccessGranted(User $user, Product $product, ?string $plainPassword = null): void
+    {
+        $access = $this->getAccessDataForUserProduct($user, $product, $plainPassword);
+        if (is_array($access)) {
+            MemberAccessGranted::dispatch($user, $product, $access);
+        }
+    }
+
+    /**
      * Send access email for enrollment webhook (n8n). Uses HUB URL when available.
      */
     public function sendForEnrollmentAccess(User $user, Product $course, ?string $plainPassword = null): bool
@@ -343,6 +393,8 @@ class AccessEmailService
         if ($course->type !== Product::TYPE_AREA_MEMBROS) {
             return false;
         }
+
+        $this->dispatchMemberAccessGranted($user, $course, $plainPassword);
 
         if ($plainPassword !== null && $plainPassword !== '') {
             Cache::put(
@@ -443,6 +495,8 @@ class AccessEmailService
         if ($product->type === Product::TYPE_LINK_PAGAMENTO) {
             return false;
         }
+
+        $this->dispatchMemberAccessGranted($user, $product, $plainPassword);
 
         $config = $product->checkout_config ?? [];
         $userEmailTemplate = is_array($config['email_template'] ?? null) ? $config['email_template'] : [];

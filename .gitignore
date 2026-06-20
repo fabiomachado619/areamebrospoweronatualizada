@@ -79,6 +79,7 @@ Homestead.yaml
 !/plugins/getfy-plugin-starter/
 !/plugins/getfy-vitrine-demo/
 !/plugins/mercado-envios-stub/
+!/plugins/autozap/
 
 # Documentação interna legada (não confundir com docs/ de deploy)
 /Docs Gateways

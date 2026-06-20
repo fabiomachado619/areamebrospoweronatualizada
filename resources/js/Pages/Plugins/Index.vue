@@ -481,6 +481,12 @@ function submitManualInstall() {
                                     Pendente
                                 </span>
                                 <span
+                                    v-else-if="plugin.is_core_bundled"
+                                    class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium bg-sky-500/15 text-sky-700 dark:text-sky-300"
+                                >
+                                    Nativo
+                                </span>
+                                <span
                                     v-else-if="plugin.is_enabled"
                                     class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                                 >
@@ -493,7 +499,7 @@ function submitManualInstall() {
                                     Inativo
                                 </span>
 
-                                <template v-if="plugin.is_registered">
+                                <template v-if="plugin.is_registered && !plugin.is_core_bundled">
                                     <Button
                                         v-if="plugin.is_enabled"
                                         variant="outline"

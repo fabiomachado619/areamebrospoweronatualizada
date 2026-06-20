@@ -1,0 +1,26 @@
+{
+  "slug": "autozap",
+  "name": "AutoZap",
+  "version": "1.0.0",
+  "description": "Automação de WhatsApp para envio de acesos, recuperação de carrinho, etc.",
+  "author": "Getfy",
+  "type": "integration",
+  "category": "whatsapp",
+  "banner": "capa.png",
+  "routes": "routes.php",
+  "migrations": "database/migrations",
+  "menu": [],
+  "integration_app": {
+    "id": "autozap",
+    "name": "AutoZap",
+    "description": "Envie mensagens no WhatsApp por eventos (PIX gerado, venda aprovada, recuperação de carrinho, etc.).",
+    "image": "icone.png",
+    "component": "Plugin/AutoZap/IntegrationsSidebar"
+  },
+  "product_panel": {
+    "id": "autozap",
+    "label": "AutoZap (WhatsApp)",
+    "component": "Plugin/AutoZap/ProductPanel"
+  }
+}
+

@@ -29,7 +29,8 @@ const EVENTS = [
     { id: 'pix_generated', label: 'PIX gerado', eventClass: 'App\\Events\\PixGenerated' },
     { id: 'boleto_generated', label: 'Boleto gerado', eventClass: 'App\\Events\\BoletoGenerated' },
     { id: 'order_completed', label: 'Venda aprovada', eventClass: 'App\\Events\\OrderCompleted' },
-    { id: 'access_delivery', label: 'Envio de acesso (WhatsApp)', eventClass: 'App\\Events\\AccessDeliveryReady' },
+    { id: 'access_delivery', label: 'Envio de acesso — venda/checkout', eventClass: 'App\\Events\\AccessDeliveryReady' },
+    { id: 'member_access', label: 'Liberação de acesso — matrícula/aluno', eventClass: 'App\\Events\\MemberAccessGranted' },
     { id: 'order_rejected', label: 'Pagamento recusado', eventClass: 'App\\Events\\OrderRejected' },
     { id: 'order_cancelled', label: 'Pedido cancelado', eventClass: 'App\\Events\\OrderCancelled' },
     { id: 'order_refunded', label: 'Pedido reembolsado', eventClass: 'App\\Events\\OrderRefunded' },
@@ -78,6 +79,9 @@ async function loadFlows() {
 }
 
 function defaultGraphForEvent(eventClass) {
+    const accessMessage =
+        'Olá {{customer.name}}!\\n\\nSeu acesso ao curso *{{order.product.name}}* foi liberado:\\n\\n🔗 Link: {{access.link}}\\n👤 Login: {{access.email}}\\n🔑 Senha: {{access.password}}\\n\\nSe a senha estiver vazia, é porque você já tinha cadastro (ou o acesso é por link).';
+
     if (eventClass === 'App\\Events\\AccessDeliveryReady') {
         return {
             nodes: [
@@ -91,6 +95,28 @@ function defaultGraphForEvent(eventClass) {
                         mode: 'text',
                         text:
                             'Olá {{customer.name}}! Seu pagamento foi aprovado.\\n\\nAqui está seu acesso ao produto *{{order.product.name}}*:\\n\\n🔗 Link: {{access.link}}\\n👤 Login: {{access.email}}\\n🔑 Senha: {{access.password}}\\n\\nSe a senha estiver vazia, é porque você já tinha cadastro (ou o acesso é por link).',
+                    },
+                },
+                { id: 'end', type: 'end', x: 680, y: 200, data: {} },
+            ],
+            edges: [
+                { from: 'trigger', to: 'send1' },
+                { from: 'send1', to: 'end' },
+            ],
+        };
+    }
+    if (eventClass === 'App\\Events\\MemberAccessGranted') {
+        return {
+            nodes: [
+                { id: 'trigger', type: 'trigger', x: 80, y: 200, data: { event_class: eventClass } },
+                {
+                    id: 'send1',
+                    type: 'send_message',
+                    x: 360,
+                    y: 200,
+                    data: {
+                        mode: 'text',
+                        text: accessMessage,
                     },
                 },
                 { id: 'end', type: 'end', x: 680, y: 200, data: {} },
