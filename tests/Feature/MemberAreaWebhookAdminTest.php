@@ -481,4 +481,117 @@ class MemberAreaWebhookAdminTest extends TestCase
                 'message' => 'E-mail não encontrado no payload.',
             ]);
     }
+
+    public function test_poweron_pending_payload_is_ignored_without_enrollment(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Power On Pendente',
+            productId: $course->id,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $email = 'poweron-pending-'.uniqid().'@example.com';
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'body' => [
+                'event' => 'pedido_pendente',
+                'payload' => [
+                    'order' => [
+                        'id' => 90002,
+                        'status' => 'pending',
+                    ],
+                    'customer' => [
+                        'name' => 'Cliente Pendente',
+                        'email' => $email,
+                        'phone' => '5511999999999',
+                    ],
+                    'status' => 'pending',
+                    'payment' => [
+                        'gateway_transaction_id' => 'tx-pending-'.uniqid(),
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => EnrollmentWebhookLog::ACTION_IGNORED,
+            ]);
+
+        $this->assertNull(User::query()->where('email', $email)->first());
+        $this->assertFalse($course->users()->exists());
+
+        $this->assertDatabaseHas('enrollment_webhook_logs', [
+            'enrollment_webhook_id' => $issued['model']->id,
+            'email' => $email,
+            'action' => EnrollmentWebhookLog::ACTION_IGNORED,
+            'error_message' => 'Evento ignorado por não ser status aprovado.',
+        ]);
+
+        $this->assertDatabaseMissing('enrollment_webhook_logs', [
+            'enrollment_webhook_id' => $issued['model']->id,
+            'email' => $email,
+            'action' => EnrollmentWebhookLog::ACTION_ERROR,
+        ]);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_poweron_paid_payload_enrolls_via_unique_url(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Power On Pago',
+            productId: $course->id,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $email = 'poweron-paid-'.uniqid().'@example.com';
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'body' => [
+                'event' => 'pedido_pago',
+                'payload' => [
+                    'order' => [
+                        'id' => 90003,
+                        'status' => 'completed',
+                    ],
+                    'customer' => [
+                        'name' => 'Cliente Pago',
+                        'email' => $email,
+                        'phone' => '5511888888888',
+                    ],
+                    'status' => 'paid',
+                    'payment' => [
+                        'gateway_transaction_id' => 'tx-paid-'.uniqid(),
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => EnrollmentWebhookLog::ACTION_ENROLLED,
+                'course_id' => (string) $course->id,
+            ]);
+
+        $user = User::query()->where('email', $email)->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
+
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class);
+    }
 }

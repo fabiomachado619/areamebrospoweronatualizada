@@ -224,6 +224,71 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->assertTrue($this->normalizer->isIgnored($normalized));
     }
 
+    public function test_poweron_extracts_email_with_alternate_event(): void
+    {
+        $payload = [
+            'body' => [
+                'event' => 'pedido_criado',
+                'payload' => [
+                    'customer' => [
+                        'name' => 'Cliente Alternativo',
+                        'email' => 'alternativo@email.com',
+                    ],
+                    'status' => 'paid',
+                ],
+            ],
+        ];
+
+        $normalized = $this->normalizer->normalize($payload);
+
+        $this->assertSame('poweron', $normalized['platform']);
+        $this->assertSame('alternativo@email.com', $normalized['email']);
+        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
+    }
+
+    public function test_poweron_extracts_email_when_event_is_at_root(): void
+    {
+        $payload = [
+            'event' => 'pedido_pago',
+            'body' => [
+                'payload' => [
+                    'customer' => [
+                        'name' => 'Cliente Root Event',
+                        'email' => 'root-event@email.com',
+                    ],
+                    'status' => 'paid',
+                ],
+            ],
+        ];
+
+        $normalized = $this->normalizer->normalize($payload);
+
+        $this->assertSame('poweron', $normalized['platform']);
+        $this->assertSame('root-event@email.com', $normalized['email']);
+        $this->assertSame('pedido_pago', $normalized['event']);
+    }
+
+    public function test_poweron_extracts_email_without_event_when_status_is_paid(): void
+    {
+        $payload = [
+            'body' => [
+                'payload' => [
+                    'customer' => [
+                        'name' => 'Cliente Sem Evento',
+                        'email' => 'sem-evento@email.com',
+                    ],
+                    'status' => 'paid',
+                ],
+            ],
+        ];
+
+        $normalized = $this->normalizer->normalize($payload);
+
+        $this->assertSame('poweron', $normalized['platform']);
+        $this->assertSame('sem-evento@email.com', $normalized['email']);
+        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
+    }
+
     public function test_to_enrollment_request_maps_product_id_to_external_product_id(): void
     {
         $normalized = $this->normalizer->normalize([

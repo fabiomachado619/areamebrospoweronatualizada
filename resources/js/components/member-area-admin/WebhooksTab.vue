@@ -126,7 +126,7 @@ const supportedFormats = [
     {
         id: 'poweron',
         label: 'Plataforma Power On',
-        hint: 'Detectado pelo envelope event + payload (pedido_pago, customer, product).',
+        hint: 'Detectado por payload.customer (event pode estar em body ou na raiz; pedido_pago não é obrigatório para extrair dados).',
         example: `{
   "event": "pedido_pago",
   "event_label": "Pedido pago",

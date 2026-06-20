@@ -113,10 +113,7 @@ class WebhookPayloadNormalizer
         }
 
         if (isset($body['payload']['customer']) && is_array($body['payload']['customer'])) {
-            $event = strtolower(trim((string) ($body['event'] ?? '')));
-            if ($event === 'pedido_pago') {
-                return self::PLATFORM_POWERON;
-            }
+            return self::PLATFORM_POWERON;
         }
 
         if (isset($body['data']['buyer']) && is_array($body['data']['buyer']) && isset($body['event'])) {
@@ -203,7 +200,7 @@ class WebhookPayloadNormalizer
             'phone' => $this->nullableString($customer['phone'] ?? null),
             'document' => $this->nullableString($customer['docNumber'] ?? null),
             'platform' => self::PLATFORM_POWERON,
-            'event' => $this->nullableString($body['event'] ?? null),
+            'event' => $this->nullableString($body['event'] ?? $rawPayload['event'] ?? null),
             'status' => $status,
             'transaction_id' => $transactionId,
             'product_id' => $this->nullableString($product['id'] ?? null),
