@@ -154,7 +154,7 @@ class EnrollmentWebhookService
             $course->users()->syncWithoutDetaching([$user->id]);
 
             $emailSent = false;
-            $shouldSendEmail = (bool) $data['send_access_email'] && ! $hadAccess;
+            $shouldSendEmail = (bool) $data['send_access_email'];
 
             if ($shouldSendEmail) {
                 $emailSent = $this->accessEmailService->sendForEnrollmentAccess(

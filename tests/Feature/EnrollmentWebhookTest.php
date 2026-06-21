@@ -192,7 +192,7 @@ class EnrollmentWebhookTest extends TestCase
         Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
     }
 
-    public function test_same_course_with_different_transaction_returns_duplicate_without_email(): void
+    public function test_same_course_with_different_transaction_still_sends_access_email(): void
     {
         Mail::fake();
 
@@ -224,17 +224,17 @@ class EnrollmentWebhookTest extends TestCase
                 'success' => true,
                 'action' => EnrollmentWebhookLog::ACTION_DUPLICATE,
                 'duplicate' => true,
-                'email_sent' => false,
+                'email_sent' => true,
                 'message' => 'Aluno já possuía acesso ao curso',
             ]);
 
-        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 2);
 
         $this->assertDatabaseHas('enrollment_webhook_logs', [
             'email' => $email,
             'course_id' => $course->id,
             'action' => EnrollmentWebhookLog::ACTION_DUPLICATE,
-            'email_sent' => false,
+            'email_sent' => true,
         ]);
     }
 
