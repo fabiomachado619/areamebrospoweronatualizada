@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\AccessDeliveryReady;
 use App\Events\MemberAccessGranted;
 use App\Mail\AccessGrantedMail;
 use App\Models\Order;
@@ -23,7 +24,7 @@ class AccessEmailService
     /**
      * Send access email for an order. Returns true on success, false otherwise.
      */
-    public function sendForOrder(Order $order, bool $force = false): bool
+    public function sendForOrder(Order $order, bool $force = false, array $deliveryContext = []): bool
     {
         Log::info('AccessEmailService: tentando enviar e-mail de acesso.', ['order_id' => $order->id]);
 
@@ -243,6 +244,22 @@ class AccessEmailService
                 $order->update(['metadata' => $meta]);
             }
 
+            $access = $this->getAccessDataForOrder($order);
+            if (is_array($access)) {
+                $user = $order->user;
+                if ($user === null && is_string($order->email) && $order->email !== '') {
+                    $user = User::query()->whereRaw('LOWER(email) = ?', [strtolower($order->email)])->first();
+                }
+
+                $this->dispatchAccessEventsAfterEmail(
+                    $user,
+                    $order->product,
+                    $access,
+                    array_merge(['source' => 'checkout'], $deliveryContext),
+                    $order,
+                );
+            }
+
             return true;
         } catch (\Throwable $e) {
             $message = $e->getMessage();
@@ -386,15 +403,43 @@ class AccessEmailService
     }
 
     /**
-     * Send access email for enrollment webhook (n8n). Uses HUB URL when available.
+     * Dispara eventos outbound (AccessDeliveryReady) e AutoZap após e-mail enviado com sucesso.
+     *
+     * @param  array{type?:string, link?:string, email?:string, password?:string, product_type?:string}  $access
+     * @param  array{source?:string, transaction_id?:string|null, platform?:string|null, sent_at?:string}  $context
      */
-    public function sendForEnrollmentAccess(User $user, Product $course, ?string $plainPassword = null): bool
+    private function dispatchAccessEventsAfterEmail(
+        ?User $user,
+        ?Product $product,
+        array $access,
+        array $context = [],
+        ?Order $order = null,
+    ): void {
+        if (! $user instanceof User || ! $product instanceof Product) {
+            return;
+        }
+
+        $context['sent_at'] = $context['sent_at'] ?? now()->toIso8601String();
+
+        AccessDeliveryReady::dispatch($order, $access, $user, $product, $context);
+        MemberAccessGranted::dispatch($user, $product, $access);
+    }
+
+    /**
+     * Send access email for enrollment webhook (n8n). Uses HUB URL when available.
+     *
+     * @param  array{source?:string, transaction_id?:string|null, platform?:string|null}  $deliveryContext
+     */
+    public function sendForEnrollmentAccess(
+        User $user,
+        Product $course,
+        ?string $plainPassword = null,
+        array $deliveryContext = [],
+    ): bool
     {
         if ($course->type !== Product::TYPE_AREA_MEMBROS) {
             return false;
         }
-
-        $this->dispatchMemberAccessGranted($user, $course, $plainPassword);
 
         if ($plainPassword !== null && $plainPassword !== '') {
             Cache::put(
@@ -475,6 +520,16 @@ class AccessEmailService
                 Cache::forget('access_password.'.$user->id.'.'.$course->id);
             }
 
+            $access = $this->getAccessDataForUserProduct($user, $course, $plainPassword);
+            if (is_array($access)) {
+                $this->dispatchAccessEventsAfterEmail(
+                    $user,
+                    $course,
+                    $access,
+                    array_merge(['source' => 'enrollment_webhook'], $deliveryContext),
+                );
+            }
+
             return true;
         } catch (\Throwable $e) {
             Log::error('AccessEmailService: falha ao enviar e-mail de matrícula (webhook).', [
@@ -489,14 +544,19 @@ class AccessEmailService
 
     /**
      * Send access email for a user who was manually granted access to a product.
+     *
+     * @param  array{source?:string, transaction_id?:string|null, platform?:string|null}  $deliveryContext
      */
-    public function sendForUserProduct(User $user, Product $product, ?string $plainPassword = null): bool
+    public function sendForUserProduct(
+        User $user,
+        Product $product,
+        ?string $plainPassword = null,
+        array $deliveryContext = [],
+    ): bool
     {
         if ($product->type === Product::TYPE_LINK_PAGAMENTO) {
             return false;
         }
-
-        $this->dispatchMemberAccessGranted($user, $product, $plainPassword);
 
         $config = $product->checkout_config ?? [];
         $userEmailTemplate = is_array($config['email_template'] ?? null) ? $config['email_template'] : [];
@@ -561,6 +621,16 @@ class AccessEmailService
                 $mailable->from(config('mail.from.address'), $template['from_name']);
             }
             Mail::mailer('smtp')->to($customerEmail)->send($mailable);
+
+            $access = $this->getAccessDataForUserProduct($user, $product, $plainPassword);
+            if (is_array($access)) {
+                $this->dispatchAccessEventsAfterEmail(
+                    $user,
+                    $product,
+                    $access,
+                    array_merge(['source' => 'manual_grant'], $deliveryContext),
+                );
+            }
 
             return true;
         } catch (\Throwable $e) {

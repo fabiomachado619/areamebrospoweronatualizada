@@ -238,7 +238,7 @@ class EnrollmentWebhookTest extends TestCase
         ]);
     }
 
-    public function test_duplicate_event_does_not_resend_email(): void
+    public function test_duplicate_event_still_resends_email_on_replay(): void
     {
         Mail::fake();
 
@@ -260,11 +260,10 @@ class EnrollmentWebhookTest extends TestCase
             ->assertJson([
                 'success' => true,
                 'duplicate' => true,
-                'email_sent' => false,
-                'message' => 'Evento já processado',
+                'email_sent' => true,
             ]);
 
-        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 2);
     }
 
     public function test_send_access_email_false_does_not_send_email(): void
@@ -395,6 +394,454 @@ class EnrollmentWebhookTest extends TestCase
                 'action' => 'enrolled',
                 'course_id' => (string) $course->id,
             ]);
+    }
+
+    public function test_webhook_manual_product_id_takes_priority_over_payload_mapping(): void
+    {
+        Mail::fake();
+
+        $courseWebhook = $this->createMemberCourse(['name' => 'Curso Webhook']);
+        $courseMapped = $this->createMemberCourse(['name' => 'Curso Mapeado']);
+
+        ['model' => $credential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Curso Manual',
+            productId: $courseWebhook->id,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        EnrollmentExternalProductMapping::query()->create([
+            'tenant_id' => 1,
+            'platform' => 'poweron',
+            'external_product_id' => 'prod-mapped',
+            'product_id' => $courseMapped->id,
+        ]);
+
+        $email = 'manual-priority-'.uniqid().'@example.com';
+        $url = '/api/webhooks/enrollment/'.$credential->webhook_key;
+
+        $response = $this->postJson($url, $this->powerOnWebhookBody($email, 94001, 'prod-mapped'));
+
+        $response->assertOk()->assertJson([
+            'success' => true,
+            'action' => 'enrolled',
+            'course_id' => (string) $courseWebhook->id,
+        ]);
+
+        $user = User::query()->where('email', $email)->first();
+        $this->assertTrue($courseWebhook->users()->where('users.id', $user->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $user->id)->exists());
+    }
+
+    public function test_webhook_manual_course_respected_for_all_platforms(): void
+    {
+        Mail::fake();
+
+        $courseWebhook = $this->createMemberCourse(['name' => 'Curso Painel']);
+        $courseMapped = $this->createMemberCourse(['name' => 'Curso Errado']);
+
+        $createMapping = function (string $platform, string $externalId) use ($courseMapped): void {
+            EnrollmentExternalProductMapping::query()->create([
+                'tenant_id' => 1,
+                'platform' => $platform,
+                'external_product_id' => $externalId,
+                'product_id' => $courseMapped->id,
+            ]);
+        };
+
+        $assertEnrolledInWebhookCourse = function (\Illuminate\Testing\TestResponse $response) use ($courseWebhook): void {
+            $response->assertOk()->assertJson([
+                'success' => true,
+                'action' => 'enrolled',
+                'course_id' => (string) $courseWebhook->id,
+            ]);
+        };
+
+        // Power On
+        $createMapping('poweron', 'prod-conflict-po');
+        ['model' => $powerOnCredential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Power On Manual',
+            productId: $courseWebhook->id,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+        $emailPo = 'po-manual-'.uniqid().'@example.com';
+        $assertEnrolledInWebhookCourse($this->postJson(
+            '/api/webhooks/enrollment/'.$powerOnCredential->webhook_key,
+            $this->powerOnWebhookBody($emailPo, 95001, 'prod-conflict-po'),
+        ));
+        $userPo = User::query()->where('email', $emailPo)->first();
+        $this->assertTrue($courseWebhook->users()->where('users.id', $userPo->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $userPo->id)->exists());
+
+        // Kiwify
+        $createMapping('kiwify', 'ext-conflict-kw');
+        ['model' => $kiwifyCredential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Kiwify Manual',
+            productId: $courseWebhook->id,
+            platform: 'kiwify',
+            externalProductId: null,
+            isActive: true,
+        );
+        $emailKw = 'kiwify-manual-'.uniqid().'@example.com';
+        $assertEnrolledInWebhookCourse($this->postJson('/api/webhooks/enrollment/'.$kiwifyCredential->webhook_key, [
+            'body' => [
+                'order_id' => 'order-'.uniqid(),
+                'order_status' => 'paid',
+                'webhook_event_type' => 'order_approved',
+                'Product' => ['product_id' => 'ext-conflict-kw', 'product_name' => 'Curso'],
+                'Customer' => [
+                    'full_name' => 'Aluno Kiwify',
+                    'email' => $emailKw,
+                    'mobile' => '+5511999999999',
+                ],
+            ],
+        ]));
+        $userKw = User::query()->where('email', $emailKw)->first();
+        $this->assertTrue($courseWebhook->users()->where('users.id', $userKw->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $userKw->id)->exists());
+
+        // Hotmart
+        $createMapping('hotmart', 'hotmart-conflict-ucode');
+        ['model' => $hotmartCredential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Hotmart Manual',
+            productId: $courseWebhook->id,
+            platform: 'hotmart',
+            externalProductId: null,
+            isActive: true,
+        );
+        $emailHm = 'hotmart-manual-'.uniqid().'@example.com';
+        $assertEnrolledInWebhookCourse($this->postJson('/api/webhooks/enrollment/'.$hotmartCredential->webhook_key, [
+            'body' => [
+                'event' => 'PURCHASE_COMPLETE',
+                'data' => [
+                    'product' => [
+                        'id' => 0,
+                        'ucode' => 'hotmart-conflict-ucode',
+                        'name' => 'Produto Hotmart',
+                    ],
+                    'purchase' => [
+                        'transaction' => 'HP'.uniqid(),
+                        'status' => 'COMPLETED',
+                    ],
+                    'buyer' => [
+                        'name' => 'Comprador Hotmart',
+                        'email' => $emailHm,
+                        'checkout_phone' => '99999999900',
+                    ],
+                ],
+            ],
+        ]));
+        $userHm = User::query()->where('email', $emailHm)->first();
+        $this->assertTrue($courseWebhook->users()->where('users.id', $userHm->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $userHm->id)->exists());
+
+        // WIAPY
+        $createMapping('wiapy', 'prod-conflict-wiapy');
+        ['model' => $wiapyCredential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Wiapy Manual',
+            productId: $courseWebhook->id,
+            platform: 'wiapy',
+            externalProductId: null,
+            isActive: true,
+        );
+        $emailWy = 'wiapy-manual-'.uniqid().'@example.com';
+        $assertEnrolledInWebhookCourse($this->postJson('/api/webhooks/enrollment/'.$wiapyCredential->webhook_key, [
+            'data' => [
+                'payment' => [
+                    'id' => 'pay-'.uniqid(),
+                    'status' => 'paid',
+                ],
+                'customer' => [
+                    'name' => 'Cliente Wiapy',
+                    'email' => $emailWy,
+                    'mobile_phone' => '(11) 99999-9999',
+                ],
+                'products' => [
+                    ['id' => 'prod-conflict-wiapy', 'title' => 'Curso Wiapy'],
+                ],
+            ],
+        ]));
+        $userWy = User::query()->where('email', $emailWy)->first();
+        $this->assertTrue($courseWebhook->users()->where('users.id', $userWy->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $userWy->id)->exists());
+
+        // GG Checkout
+        $createMapping('gg_checkout', 'YbfsgK1Fgm0LzUsFglrn');
+        ['model' => $ggCredential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'GG Checkout Manual',
+            productId: $courseWebhook->id,
+            platform: 'gg_checkout',
+            externalProductId: null,
+            isActive: true,
+        );
+        $emailGg = 'gg-manual-all-'.uniqid().'@example.com';
+        $assertEnrolledInWebhookCourse($this->postJson('/api/webhooks/enrollment/'.$ggCredential->webhook_key, [
+            'event' => 'pix.paid',
+            'customer' => [
+                'name' => 'Cliente GG',
+                'email' => $emailGg,
+                'phone' => '5511999999999',
+            ],
+            'payment' => [
+                'id' => 'pay-'.uniqid(),
+                'status' => 'paid',
+            ],
+            'product' => [
+                'id' => 'YbfsgK1Fgm0LzUsFglrn',
+                'title' => 'Produto GG',
+            ],
+        ]));
+        $userGg = User::query()->where('email', $emailGg)->first();
+        $this->assertTrue($courseWebhook->users()->where('users.id', $userGg->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $userGg->id)->exists());
+
+        // Notascast (sem product id no payload — webhook manual continua valendo)
+        ['model' => $notascastCredential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Notascast Manual',
+            productId: $courseWebhook->id,
+            platform: 'notascast',
+            externalProductId: null,
+            isActive: true,
+        );
+        $emailNc = 'notascast-manual-'.uniqid().'@example.com';
+        $assertEnrolledInWebhookCourse($this->postJson('/api/webhooks/enrollment/'.$notascastCredential->webhook_key, [
+            'body' => [
+                'name' => 'Aluno Notascast',
+                'whatsapp' => '+5565999999999',
+                'email' => $emailNc,
+            ],
+        ]));
+        $userNc = User::query()->where('email', $emailNc)->first();
+        $this->assertTrue($courseWebhook->users()->where('users.id', $userNc->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $userNc->id)->exists());
+    }
+
+    public function test_webhook_manual_course_existing_student_and_replay_dedup(): void
+    {
+        Mail::fake();
+
+        $courseWebhook = $this->createMemberCourse(['name' => 'Curso Webhook Dedup']);
+        $courseMapped = $this->createMemberCourse(['name' => 'Curso Mapeado Dedup']);
+
+        EnrollmentExternalProductMapping::query()->create([
+            'tenant_id' => 1,
+            'platform' => 'poweron',
+            'external_product_id' => 'prod-dedup-manual',
+            'product_id' => $courseMapped->id,
+        ]);
+
+        ['model' => $credential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Dedup Manual',
+            productId: $courseWebhook->id,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $otherCourse = $this->createMemberCourse(['name' => 'Outro Curso Aluno']);
+        $aluno = User::factory()->create([
+            'email' => 'dedup-manual-'.uniqid().'@example.com',
+            'role' => User::ROLE_ALUNO,
+            'tenant_id' => 1,
+        ]);
+        $otherCourse->users()->attach($aluno->id);
+
+        $url = '/api/webhooks/enrollment/'.$credential->webhook_key;
+        $body = $this->powerOnWebhookBody($aluno->email, 96001, 'prod-dedup-manual');
+
+        $this->postJson($url, $body)
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => 'enrolled',
+                'course_id' => (string) $courseWebhook->id,
+                'duplicate' => false,
+            ]);
+
+        $this->assertTrue($courseWebhook->users()->where('users.id', $aluno->id)->exists());
+        $this->assertFalse($courseMapped->users()->where('users.id', $aluno->id)->exists());
+
+        $this->postJson($url, $body)
+            ->assertOk()
+            ->assertJson([
+                'duplicate' => true,
+                'email_sent' => true,
+            ]);
+
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 2);
+    }
+
+    public function test_poweron_same_order_different_products_enrolls_both_courses(): void
+    {
+        Mail::fake();
+
+        $courseA = $this->createMemberCourse(['name' => 'Curso Principal']);
+        $courseB = $this->createMemberCourse(['name' => 'Curso Bump']);
+
+        ['model' => $credential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Power On Multi',
+            productId: null,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        foreach ([['prod-a', $courseA], ['prod-b', $courseB]] as [$externalId, $course]) {
+            EnrollmentExternalProductMapping::query()->create([
+                'tenant_id' => 1,
+                'platform' => 'poweron',
+                'external_product_id' => $externalId,
+                'product_id' => $course->id,
+            ]);
+        }
+
+        $email = 'poweron-multi-'.uniqid().'@example.com';
+        $orderId = 91001;
+        $url = '/api/webhooks/enrollment/'.$credential->webhook_key;
+
+        foreach (['prod-a', 'prod-b'] as $productId) {
+            $this->postJson($url, $this->powerOnWebhookBody($email, $orderId, $productId))
+                ->assertOk()
+                ->assertJson([
+                    'success' => true,
+                    'action' => EnrollmentWebhookLog::ACTION_ENROLLED,
+                    'duplicate' => false,
+                ]);
+        }
+
+        $user = User::query()->where('email', $email)->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($courseA->users()->where('users.id', $user->id)->exists());
+        $this->assertTrue($courseB->users()->where('users.id', $user->id)->exists());
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 2);
+    }
+
+    public function test_poweron_main_bump_upsell_same_order_enrolls_three_courses(): void
+    {
+        Mail::fake();
+
+        $courses = [
+            $this->createMemberCourse(['name' => 'Principal']),
+            $this->createMemberCourse(['name' => 'Order Bump']),
+            $this->createMemberCourse(['name' => 'Upsell']),
+        ];
+        $productIds = ['prod-main', 'prod-bump', 'prod-upsell'];
+
+        ['model' => $credential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Power On Bundle',
+            productId: null,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        foreach ($productIds as $index => $externalId) {
+            EnrollmentExternalProductMapping::query()->create([
+                'tenant_id' => 1,
+                'platform' => 'poweron',
+                'external_product_id' => $externalId,
+                'product_id' => $courses[$index]->id,
+            ]);
+        }
+
+        $email = 'poweron-bundle-'.uniqid().'@example.com';
+        $orderId = 92002;
+        $url = '/api/webhooks/enrollment/'.$credential->webhook_key;
+
+        foreach ($productIds as $productId) {
+            $this->postJson($url, $this->powerOnWebhookBody($email, $orderId, $productId))
+                ->assertOk()
+                ->assertJson(['action' => EnrollmentWebhookLog::ACTION_ENROLLED]);
+        }
+
+        $user = User::query()->where('email', $email)->first();
+        foreach ($courses as $course) {
+            $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
+        }
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 3);
+    }
+
+    public function test_identical_replay_same_product_resends_email(): void
+    {
+        Mail::fake();
+
+        $course = $this->createMemberCourse();
+        $otherCourse = $this->createMemberCourse(['name' => 'Curso Mapping Conflitante']);
+
+        EnrollmentExternalProductMapping::query()->create([
+            'tenant_id' => 1,
+            'platform' => 'poweron',
+            'external_product_id' => 'prod-dup',
+            'product_id' => $otherCourse->id,
+        ]);
+
+        ['model' => $credential] = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Dup Replay',
+            productId: $course->id,
+            platform: 'poweron',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $email = 'poweron-dup-'.uniqid().'@example.com';
+        $body = $this->powerOnWebhookBody($email, 93003, 'prod-dup');
+        $url = '/api/webhooks/enrollment/'.$credential->webhook_key;
+
+        $this->postJson($url, $body)->assertOk()->assertJson(['action' => 'enrolled']);
+
+        $this->postJson($url, $body)
+            ->assertOk()
+            ->assertJson([
+                'duplicate' => true,
+                'email_sent' => true,
+            ]);
+
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 2);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function powerOnWebhookBody(string $email, int $orderId, string $productId): array
+    {
+        return [
+            'body' => [
+                'event' => 'pedido_pago',
+                'payload' => [
+                    'order' => [
+                        'id' => $orderId,
+                        'status' => 'completed',
+                    ],
+                    'customer' => [
+                        'name' => 'Cliente Power On',
+                        'email' => $email,
+                        'phone' => '5511999999999',
+                    ],
+                    'status' => 'paid',
+                    'payment' => [
+                        'gateway_transaction_id' => 'tx-order-'.$orderId,
+                    ],
+                    'product' => [
+                        'id' => $productId,
+                        'name' => 'Produto '.$productId,
+                    ],
+                ],
+            ],
+        ];
     }
 
     /**

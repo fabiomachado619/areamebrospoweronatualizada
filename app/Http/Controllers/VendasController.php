@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Events\AccessDeliveryReady;
 use App\Events\OrderCompleted;
 use App\Events\OrderStatusChanged;
 use App\Events\SubscriptionRenewed;
@@ -514,12 +513,7 @@ class VendasController extends Controller
             return response()->json(['success' => false, 'message' => 'Pedido não encontrado.'], 404);
         }
 
-        $access = $accessEmailService->getAccessDataForOrder($order);
-        if (is_array($access)) {
-            AccessDeliveryReady::dispatch($order, $access);
-        }
-
-        if ($accessEmailService->sendForOrder($order, true)) {
+        if ($accessEmailService->sendForOrder($order, true, ['source' => 'manual_resend'])) {
             return response()->json(['success' => true]);
         }
 

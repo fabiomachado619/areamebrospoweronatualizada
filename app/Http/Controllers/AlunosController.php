@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\AccessEmailService;
+use App\Services\CheckoutStudentProvisioningService;
 use App\Services\TeamAccessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -197,7 +198,7 @@ class AlunosController extends Controller
 
         $sent = 0;
         foreach ($products as $product) {
-            if ($accessEmailService->sendForUserProduct($aluno, $product)) {
+            if ($accessEmailService->sendForUserProduct($aluno, $product, null, ['source' => 'manual_resend'])) {
                 $sent++;
             }
         }
@@ -236,7 +237,7 @@ class AlunosController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:6', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:32'],
             'product_ids' => ['nullable', 'array'],
             'product_ids.*' => ['string', 'exists:products,id'],
             'send_access_email' => ['nullable', 'boolean'],
@@ -245,11 +246,14 @@ class AlunosController extends Controller
         $tenantProductIds = $this->tenantProductIds($tenantId);
         $productIds = array_values(array_intersect($productIds, $tenantProductIds));
         $sendAccessEmail = (bool) ($validated['send_access_email'] ?? true);
+        $phone = trim($validated['phone'] ?? '');
+        $plainPassword = CheckoutStudentProvisioningService::DEFAULT_PASSWORD;
 
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
-            'password' => Hash::make($validated['password']),
+            'phone' => $phone !== '' ? $phone : null,
+            'password' => Hash::make($plainPassword),
             'role' => User::ROLE_ALUNO,
             'tenant_id' => $tenantId,
         ]);
@@ -262,7 +266,7 @@ class AlunosController extends Controller
         if ($sendAccessEmail && ! empty($productIds)) {
             $products = Product::whereIn('id', $productIds)->get();
             foreach ($products as $product) {
-                if ($accessEmailService->sendForUserProduct($user, $product, $validated['password'])) {
+                if ($accessEmailService->sendForUserProduct($user, $product, $plainPassword)) {
                     $emailsSent++;
                 }
             }

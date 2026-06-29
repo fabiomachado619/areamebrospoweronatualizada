@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Validator;
 class EnrollmentWebhookController extends Controller
 {
     /**
-     * POST /api/webhooks/enrollment/{webhook_key} — autenticação pela URL (n8n).
+     * POST/GET/HEAD /api/webhooks/enrollment/{webhook_key} — autenticação pela URL (n8n / WIAPY).
      */
     public function byKey(Request $request, string $webhookKey, EnrollmentWebhookService $service): JsonResponse
     {
@@ -25,6 +25,12 @@ class EnrollmentWebhookController extends Controller
 
         if (! $credential->is_active) {
             return response()->json(['success' => false, 'message' => 'Webhook inativo.'], 403);
+        }
+
+        if ($request->isMethod('GET') || $request->isMethod('HEAD')) {
+            $credential->touchLastUsed();
+
+            return $this->probeResponse();
         }
 
         return $this->processEnrollment($request, $service, $credential);
@@ -52,6 +58,13 @@ class EnrollmentWebhookController extends Controller
         $normalizer = app(WebhookPayloadNormalizer::class);
 
         $rawPayload = $request->all();
+
+        if ($normalizer->isProbePayload($rawPayload)) {
+            $credential->touchLastUsed();
+
+            return $this->probeResponse();
+        }
+
         $normalized = $normalizer->normalize($rawPayload);
 
         if ($normalized['email'] === null || $normalized['email'] === '') {
@@ -66,20 +79,6 @@ class EnrollmentWebhookController extends Controller
             $credential->touchLastUsed();
 
             return response()->json($result, 422);
-        }
-
-        if ($normalizer->isIgnored($normalized)) {
-            $result = $service->logInboundOnly(
-                $tenantId,
-                $normalizer->toEnrollmentRequest($normalized),
-                $credential,
-                EnrollmentWebhookLog::ACTION_IGNORED,
-                'Evento ignorado por não ser status aprovado.',
-                true,
-            );
-            $credential->touchLastUsed();
-
-            return response()->json($result, 200);
         }
 
         $candidate = $normalizer->toEnrollmentRequest($normalized);
@@ -128,5 +127,14 @@ class EnrollmentWebhookController extends Controller
         $status = ($result['success'] ?? false) ? 200 : 422;
 
         return response()->json($result, $status);
+    }
+
+    private function probeResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'message' => 'Webhook received',
+            'action' => EnrollmentWebhookLog::ACTION_IGNORED,
+        ], 200);
     }
 }

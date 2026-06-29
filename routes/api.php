@@ -38,7 +38,7 @@ Route::middleware(['api.application', 'throttle:api'])->prefix('v1')->group(func
 | Legado: POST /api/webhooks/enrollment com Bearer token
 |--------------------------------------------------------------------------
 */
-Route::match(['post', 'options'], 'webhooks/enrollment/{webhook_key}', [\App\Http\Controllers\Api\EnrollmentWebhookController::class, 'byKey'])
+Route::match(['get', 'head', 'post', 'options'], 'webhooks/enrollment/{webhook_key}', [\App\Http\Controllers\Api\EnrollmentWebhookController::class, 'byKey'])
     ->where('webhook_key', '[a-zA-Z0-9]{16,64}')
     ->middleware(['enrollment.webhook.cors', 'throttle:api'])
     ->name('api.webhooks.enrollment.by-key');

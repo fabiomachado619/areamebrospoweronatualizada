@@ -15,7 +15,7 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->normalizer = new WebhookPayloadNormalizer;
     }
 
-    public function test_notascast_payload_is_normalized_and_granted(): void
+    public function test_notascast_payload_is_normalized(): void
     {
         $payload = [
             'body' => [
@@ -32,7 +32,6 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->assertSame('+5565992976877', $normalized['phone']);
         $this->assertSame('notascast', $normalized['platform']);
         $this->assertSame('lead_created', $normalized['event']);
-        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
     }
 
     public function test_poweron_payload_is_normalized(): void
@@ -66,7 +65,6 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->assertSame('paid', $normalized['status']);
         $this->assertSame('tx_exemplo_123', $normalized['transaction_id']);
         $this->assertSame('prod-exemplo-uuid', $normalized['product_id']);
-        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
     }
 
     public function test_kiwify_payload_is_normalized(): void
@@ -96,7 +94,6 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->assertSame('kiwify', $normalized['platform']);
         $this->assertSame('order_approved', $normalized['event']);
         $this->assertSame('paid', $normalized['status']);
-        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
     }
 
     public function test_wiapy_payload_at_root_is_normalized(): void
@@ -129,7 +126,6 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->assertSame('thiagorodrigues386@gmail.com', $normalized['email']);
         $this->assertSame('wiapy', $normalized['platform']);
         $this->assertSame('paid', $normalized['status']);
-        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
     }
 
     public function test_hotmart_payload_is_normalized(): void
@@ -164,7 +160,6 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->assertSame('hotmart', $normalized['platform']);
         $this->assertSame('purchase_complete', $normalized['event']);
         $this->assertSame('completed', $normalized['status']);
-        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
     }
 
     public function test_canonical_payload_passthrough(): void
@@ -190,7 +185,7 @@ class WebhookPayloadNormalizerTest extends TestCase
         $this->assertTrue($request['send_access_email']);
     }
 
-    public function test_missing_email_is_not_approved_and_name_falls_back_to_email(): void
+    public function test_missing_email_normalizes_without_email(): void
     {
         $payload = [
             'body' => [
@@ -202,10 +197,9 @@ class WebhookPayloadNormalizerTest extends TestCase
         $normalized = $this->normalizer->normalize($payload);
 
         $this->assertNull($normalized['email']);
-        $this->assertFalse($this->normalizer->isApprovedForGrant($normalized));
     }
 
-    public function test_pending_payment_is_ignored(): void
+    public function test_pending_payment_normalizes_email_and_event(): void
     {
         $payload = [
             'body' => [
@@ -221,7 +215,9 @@ class WebhookPayloadNormalizerTest extends TestCase
 
         $normalized = $this->normalizer->normalize($payload);
 
-        $this->assertTrue($this->normalizer->isIgnored($normalized));
+        $this->assertSame('pending@example.com', $normalized['email']);
+        $this->assertSame('order_created', $normalized['event']);
+        $this->assertSame('waiting_payment', $normalized['status']);
     }
 
     public function test_poweron_extracts_email_with_alternate_event(): void
@@ -243,7 +239,6 @@ class WebhookPayloadNormalizerTest extends TestCase
 
         $this->assertSame('poweron', $normalized['platform']);
         $this->assertSame('alternativo@email.com', $normalized['email']);
-        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
     }
 
     public function test_poweron_extracts_email_when_event_is_at_root(): void
@@ -286,7 +281,6 @@ class WebhookPayloadNormalizerTest extends TestCase
 
         $this->assertSame('poweron', $normalized['platform']);
         $this->assertSame('sem-evento@email.com', $normalized['email']);
-        $this->assertTrue($this->normalizer->isApprovedForGrant($normalized));
     }
 
     public function test_to_enrollment_request_maps_product_id_to_external_product_id(): void
@@ -305,6 +299,142 @@ class WebhookPayloadNormalizerTest extends TestCase
         $request = $this->normalizer->toEnrollmentRequest($normalized);
 
         $this->assertSame('external-prod-1', $request['external_product_id']);
-        $this->assertSame('purchase_approved', $request['event']);
+        $this->assertSame('pedido_pago', $request['event']);
+    }
+
+    public function test_is_probe_payload_detects_empty_and_test_events(): void
+    {
+        $this->assertTrue($this->normalizer->isProbePayload([]));
+        $this->assertTrue($this->normalizer->isProbePayload(['event' => 'test']));
+        $this->assertTrue($this->normalizer->isProbePayload(['event' => 'ping']));
+        $this->assertTrue($this->normalizer->isProbePayload(['event' => 'webhook.test']));
+        $this->assertTrue($this->normalizer->isProbePayload(['event' => 'healthcheck']));
+        $this->assertTrue($this->normalizer->isProbePayload(['event' => 'validation']));
+        $this->assertTrue($this->normalizer->isProbePayload(['event' => 'health_check']));
+    }
+
+    public function test_is_probe_payload_does_not_infer_test_from_wiapy_partial_without_email(): void
+    {
+        $this->assertFalse($this->normalizer->isProbePayload([
+            'data' => [
+                'payment' => ['status' => 'paid'],
+                'customer' => [],
+            ],
+        ]));
+    }
+
+    public function test_is_probe_payload_does_not_flag_platform_real_payloads(): void
+    {
+        $this->assertFalse($this->normalizer->isProbePayload([
+            'data' => [
+                'payment' => ['id' => 'pay-1', 'status' => 'paid'],
+                'customer' => ['email' => 'cliente@example.com', 'name' => 'Cliente'],
+                'products' => [['id' => 'p1', 'title' => 'Curso']],
+            ],
+        ]));
+
+        $this->assertFalse($this->normalizer->isProbePayload([
+            'body' => [
+                'event' => 'pedido_pago',
+                'payload' => [
+                    'customer' => ['email' => 'a@test.com', 'name' => 'A'],
+                    'status' => 'paid',
+                    'product' => ['id' => 'p1'],
+                ],
+            ],
+        ]));
+
+        $this->assertFalse($this->normalizer->isProbePayload([
+            'body' => [
+                'order_status' => 'paid',
+                'webhook_event_type' => 'order_approved',
+                'Customer' => ['email' => 'a@test.com', 'full_name' => 'A'],
+            ],
+        ]));
+
+        $this->assertFalse($this->normalizer->isProbePayload([
+            'event' => 'pix.paid',
+            'customer' => ['email' => 'gg@test.com', 'name' => 'GG'],
+            'payment' => ['id' => 'pay-1', 'status' => 'paid'],
+            'product' => ['id' => 'prod-gg', 'title' => 'Produto'],
+        ]));
+    }
+
+    public function test_gg_checkout_payload_is_detected_as_gg_checkout(): void
+    {
+        $payload = [
+            'event' => 'pix.paid',
+            'createdAt' => '2024-01-15T10:30:00Z',
+            'customer' => [
+                'name' => 'Joao Silva',
+                'email' => 'joao@email.com',
+                'document' => '12345678901',
+                'phone' => '5511999999999',
+            ],
+            'payment' => [
+                'id' => '29cce702-5e7e-40da-93b0-aaa19acab32e',
+                'status' => 'paid',
+                'amount' => 97.00,
+            ],
+            'product' => [
+                'id' => 'YbfsgK1Fgm0LzUsFglrn',
+                'title' => 'Meu Produto Digital',
+            ],
+        ];
+
+        $normalized = $this->normalizer->normalize($payload);
+
+        $this->assertSame('gg_checkout', $normalized['platform']);
+    }
+
+    public function test_gg_checkout_payload_normalizes_student_and_payment_fields(): void
+    {
+        $payload = [
+            'event' => 'card.paid',
+            'createdAt' => '2024-01-15T10:30:00Z',
+            'customer' => [
+                'name' => 'Joao Silva',
+                'email' => 'joao@email.com',
+                'document' => '12345678901',
+                'phone' => '5511999999999',
+            ],
+            'payment' => [
+                'id' => 'tx-gg-123',
+                'status' => 'refunded',
+            ],
+            'product' => [
+                'id' => 'YbfsgK1Fgm0LzUsFglrn',
+                'title' => 'Meu Produto Digital',
+            ],
+        ];
+
+        $normalized = $this->normalizer->normalize($payload);
+
+        $this->assertSame('Joao Silva', $normalized['name']);
+        $this->assertSame('joao@email.com', $normalized['email']);
+        $this->assertSame('5511999999999', $normalized['phone']);
+        $this->assertSame('12345678901', $normalized['document']);
+        $this->assertSame('card.paid', $normalized['event']);
+        $this->assertSame('refunded', $normalized['status']);
+        $this->assertSame('tx-gg-123', $normalized['transaction_id']);
+        $this->assertSame('YbfsgK1Fgm0LzUsFglrn', $normalized['product_id']);
+        $this->assertSame('Meu Produto Digital', $normalized['product_name']);
+    }
+
+    public function test_gg_checkout_to_enrollment_request_preserves_event(): void
+    {
+        $payload = [
+            'event' => 'pix.generated',
+            'customer' => ['email' => 'gg-grant@example.com', 'name' => 'GG'],
+            'payment' => ['id' => 'pay-1', 'status' => 'waiting_payment'],
+            'product' => ['id' => 'prod-1', 'title' => 'Produto'],
+        ];
+
+        $normalized = $this->normalizer->normalize($payload);
+        $request = $this->normalizer->toEnrollmentRequest($normalized);
+
+        $this->assertSame('gg-grant@example.com', $request['email']);
+        $this->assertSame('pix.generated', $request['event']);
+        $this->assertSame('waiting_payment', $request['status']);
     }
 }

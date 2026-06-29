@@ -57,19 +57,39 @@ class AutoZapPayload
         }
 
         if ($event instanceof AccessDeliveryReady) {
-            $order = $event->order;
-            $order->loadMissing(['user', 'product', 'productOffer', 'subscriptionPlan']);
-            $base['order'] = $order->toArray();
-            $base['customer'] = [
-                'name' => $order->user?->name,
-                'email' => $order->email,
-                'phone' => $order->phone ?: $order->user?->phone,
-                'cpf' => $order->cpf,
-            ];
-            $base['checkout_link'] = $order->getCheckoutSlug()
-                ? url('/c/' . $order->getCheckoutSlug())
-                : null;
-            $base['access'] = is_array($event->access) ? $event->access : [];
+            if ($event->user instanceof \App\Models\User && $event->product instanceof \App\Models\Product) {
+                $user = $event->user;
+                $product = $event->product;
+                $user->loadMissing([]);
+                $product->loadMissing([]);
+                $base['order'] = [
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'product' => $product->toArray(),
+                ];
+                $base['customer'] = [
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'cpf' => null,
+                ];
+                $base['checkout_link'] = is_array($event->access) ? ($event->access['link'] ?? null) : null;
+                $base['access'] = is_array($event->access) ? $event->access : [];
+            } elseif ($event->order !== null) {
+                $order = $event->order;
+                $order->loadMissing(['user', 'product', 'productOffer', 'subscriptionPlan']);
+                $base['order'] = $order->toArray();
+                $base['customer'] = [
+                    'name' => $order->user?->name,
+                    'email' => $order->email,
+                    'phone' => $order->phone ?: $order->user?->phone,
+                    'cpf' => $order->cpf,
+                ];
+                $base['checkout_link'] = $order->getCheckoutSlug()
+                    ? url('/c/' . $order->getCheckoutSlug())
+                    : null;
+                $base['access'] = is_array($event->access) ? $event->access : [];
+            }
         }
 
         if ($event instanceof MemberAccessGranted) {

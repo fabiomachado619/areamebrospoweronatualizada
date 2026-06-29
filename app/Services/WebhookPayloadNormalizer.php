@@ -14,7 +14,46 @@ class WebhookPayloadNormalizer
 
     public const PLATFORM_HOTMART = 'hotmart';
 
+    public const PLATFORM_GG_CHECKOUT = 'gg_checkout';
+
     public const PLATFORM_CANONICAL = 'canonical';
+
+    /** @var list<string> */
+    public const PROBE_EVENTS = [
+        'test',
+        'ping',
+        'webhook.test',
+        'healthcheck',
+        'health_check',
+        'validation',
+    ];
+
+    /**
+     * Detecta apenas probes explícitos (body vazio ou evento de teste conhecido).
+     * Não infere teste a partir de payload parcial de nenhuma plataforma.
+     *
+     * @param  array<string, mixed>  $rawPayload
+     */
+    public function isProbePayload(array $rawPayload): bool
+    {
+        if ($rawPayload === []) {
+            return true;
+        }
+
+        $root = $rawPayload;
+        $body = isset($rawPayload['body']) && is_array($rawPayload['body']) ? $rawPayload['body'] : $rawPayload;
+
+        foreach ([$root, $body] as $source) {
+            foreach (['event', 'type'] as $field) {
+                $value = strtolower(trim((string) ($source[$field] ?? '')));
+                if ($value !== '' && in_array($value, self::PROBE_EVENTS, true)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     /**
      * @param  array<string, mixed>  $payload
@@ -33,34 +72,11 @@ class WebhookPayloadNormalizer
             self::PLATFORM_HOTMART => $this->normalizeHotmart($body, $payload),
             self::PLATFORM_WIAPY => $this->normalizeWiapy($root, $body, $payload),
             self::PLATFORM_NOTASCAST => $this->normalizeNotascast($body, $payload),
+            self::PLATFORM_GG_CHECKOUT => $this->normalizeGgCheckout($body, $payload),
             default => $this->normalizeCanonical($root, $body, $payload),
         };
 
         return $this->finalizeNormalized($normalized);
-    }
-
-    /**
-     * @param  array<string, mixed>  $normalized
-     */
-    public function isApprovedForGrant(array $normalized): bool
-    {
-        return $this->resolveAction($normalized) === 'grant';
-    }
-
-    /**
-     * @param  array<string, mixed>  $normalized
-     */
-    public function isRevokeForAccess(array $normalized): bool
-    {
-        return $this->resolveAction($normalized) === 'revoke';
-    }
-
-    /**
-     * @param  array<string, mixed>  $normalized
-     */
-    public function isIgnored(array $normalized): bool
-    {
-        return $this->resolveAction($normalized) === 'ignore';
     }
 
     /**
@@ -70,21 +86,15 @@ class WebhookPayloadNormalizer
     public function toEnrollmentRequest(array $normalized): array
     {
         $raw = is_array($normalized['raw_payload'] ?? null) ? $normalized['raw_payload'] : [];
-        $action = $this->resolveAction($normalized);
+        $event = $this->nullableLower($normalized['event'] ?? null) ?? '';
 
-        $event = match ($action) {
-            'grant' => 'purchase_approved',
-            'revoke' => $this->mapRevokeEvent($normalized),
-            default => '',
-        };
-
-        $request = [
+        return [
             'name' => $normalized['name'],
             'email' => $normalized['email'],
             'phone' => $normalized['phone'],
             'document' => $normalized['document'],
             'platform' => $normalized['platform'],
-            'event' => $event !== '' ? $event : (string) ($normalized['event'] ?? ''),
+            'event' => $event !== '' ? $event : 'purchase_approved',
             'transaction_id' => $normalized['transaction_id'],
             'status' => $normalized['status'],
             'external_product_id' => $normalized['product_id'],
@@ -94,12 +104,6 @@ class WebhookPayloadNormalizer
                 ? (bool) $raw['send_access_email']
                 : true,
         ];
-
-        if ($action === 'grant' && $request['event'] === '') {
-            $request['event'] = 'purchase_approved';
-        }
-
-        return $request;
     }
 
     /**
@@ -124,6 +128,10 @@ class WebhookPayloadNormalizer
             return self::PLATFORM_WIAPY;
         }
 
+        if ($this->looksLikeGgCheckout($body)) {
+            return self::PLATFORM_GG_CHECKOUT;
+        }
+
         if ($this->looksLikeNotascast($body)) {
             return self::PLATFORM_NOTASCAST;
         }
@@ -138,6 +146,16 @@ class WebhookPayloadNormalizer
     {
         return isset($data['data']['payment']) && is_array($data['data']['payment'])
             && isset($data['data']['customer']) && is_array($data['data']['customer']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    private function looksLikeGgCheckout(array $body): bool
+    {
+        return isset($body['customer']) && is_array($body['customer'])
+            && isset($body['payment']) && is_array($body['payment'])
+            && isset($body['product']) && is_array($body['product']);
     }
 
     /**
@@ -301,6 +319,32 @@ class WebhookPayloadNormalizer
     }
 
     /**
+     * @param  array<string, mixed>  $body
+     * @param  array<string, mixed>  $rawPayload
+     * @return array<string, mixed>
+     */
+    private function normalizeGgCheckout(array $body, array $rawPayload): array
+    {
+        $customer = is_array($body['customer'] ?? null) ? $body['customer'] : [];
+        $payment = is_array($body['payment'] ?? null) ? $body['payment'] : [];
+        $product = is_array($body['product'] ?? null) ? $body['product'] : [];
+
+        return [
+            'name' => $this->nullableString($customer['name'] ?? null),
+            'email' => $this->nullableString($customer['email'] ?? null),
+            'phone' => $this->nullableString($customer['phone'] ?? null),
+            'document' => $this->nullableString($customer['document'] ?? null),
+            'platform' => self::PLATFORM_GG_CHECKOUT,
+            'event' => $this->nullableString($body['event'] ?? null),
+            'status' => $this->nullableString($payment['status'] ?? null),
+            'transaction_id' => $this->nullableString($payment['id'] ?? null),
+            'product_id' => $this->nullableString($product['id'] ?? null),
+            'product_name' => $this->nullableString($product['title'] ?? null),
+            'raw_payload' => $rawPayload,
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $root
      * @param  array<string, mixed>  $body
      * @param  array<string, mixed>  $rawPayload
@@ -362,121 +406,6 @@ class WebhookPayloadNormalizer
             'product_name' => $this->nullableString($normalized['product_name'] ?? null),
             'raw_payload' => $normalized['raw_payload'] ?? [],
         ];
-    }
-
-    /**
-     * @param  array<string, mixed>  $normalized
-     */
-    private function resolveAction(array $normalized): string
-    {
-        if ($this->matchesRevoke($normalized)) {
-            return 'revoke';
-        }
-
-        if ($this->matchesGrant($normalized)) {
-            return 'grant';
-        }
-
-        return 'ignore';
-    }
-
-    /**
-     * @param  array<string, mixed>  $normalized
-     */
-    private function matchesGrant(array $normalized): bool
-    {
-        $event = strtolower(trim((string) ($normalized['event'] ?? '')));
-        $status = strtolower(trim((string) ($normalized['status'] ?? '')));
-
-        $grantEvents = [
-            'purchase_approved',
-            'order_paid',
-            'subscription_active',
-            'approved',
-            'order_approved',
-            'pedido_pago',
-            'purchase_complete',
-            'lead_created',
-            'payment',
-        ];
-
-        $grantStatuses = [
-            'paid',
-            'approved',
-            'completed',
-            'active',
-        ];
-
-        if ($event !== '' && in_array($event, $grantEvents, true)) {
-            return true;
-        }
-
-        if ($status !== '' && in_array($status, $grantStatuses, true)) {
-            return true;
-        }
-
-        if ($normalized['platform'] === self::PLATFORM_NOTASCAST && $event === 'lead_created') {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * @param  array<string, mixed>  $normalized
-     */
-    private function matchesRevoke(array $normalized): bool
-    {
-        $event = strtolower(trim((string) ($normalized['event'] ?? '')));
-        $status = strtolower(trim((string) ($normalized['status'] ?? '')));
-
-        $revokeTokens = [
-            'refund',
-            'refunded',
-            'chargeback',
-            'canceled',
-            'cancelled',
-            'subscription_canceled',
-            'subscription_expired',
-        ];
-
-        $blockedStatuses = [
-            'refused',
-            'canceled',
-            'cancelled',
-            'refunded',
-            'chargeback',
-            'waiting_payment',
-            'pending',
-            'expired',
-        ];
-
-        foreach ($revokeTokens as $token) {
-            if ($event !== '' && str_contains($event, $token)) {
-                return true;
-            }
-        }
-
-        return in_array($status, ['refunded', 'chargeback', 'canceled', 'cancelled'], true);
-    }
-
-    /**
-     * @param  array<string, mixed>  $normalized
-     */
-    private function mapRevokeEvent(array $normalized): string
-    {
-        $event = strtolower(trim((string) ($normalized['event'] ?? '')));
-        $status = strtolower(trim((string) ($normalized['status'] ?? '')));
-
-        if (str_contains($event, 'chargeback') || $status === 'chargeback') {
-            return 'chargeback';
-        }
-
-        if (str_contains($event, 'refund') || $status === 'refunded') {
-            return 'refund';
-        }
-
-        return 'canceled';
     }
 
     private function nullableString(mixed $value): ?string

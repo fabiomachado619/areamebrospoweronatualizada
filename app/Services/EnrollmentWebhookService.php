@@ -27,45 +27,20 @@ class EnrollmentWebhookService
     public function process(int $tenantId, array $payload, ?EnrollmentWebhookCredential $credential = null): array
     {
         $normalized = $this->normalizePayload($payload);
-        $platform = $normalized['platform'];
-        $event = $normalized['event'];
-        $transactionId = $normalized['transaction_id'];
-
-        if ($duplicate = EnrollmentWebhookLog::findProcessedDuplicate($tenantId, $platform, $transactionId, $event)) {
-            return [
-                'success' => true,
-                'duplicate' => true,
-                'email_sent' => false,
-                'message' => 'Evento já processado',
-                'action' => $duplicate->action,
-            ];
-        }
 
         try {
-            if ($this->isIgnoredEvent($event)) {
-                $this->writeLog($tenantId, $normalized, EnrollmentWebhookLog::ACTION_IGNORED, false, null, null, null, $credential);
-
-                return [
-                    'success' => true,
-                    'action' => EnrollmentWebhookLog::ACTION_IGNORED,
-                    'duplicate' => false,
-                    'email_sent' => false,
-                    'message' => 'Evento ignorado',
-                ];
-            }
-
             $course = $this->resolveCourse($tenantId, $normalized, $credential);
             $this->validateOptionalHub($tenantId, $normalized['hub_id']);
 
-            if ($this->isRevokeEvent($event)) {
+            if ($this->shouldRevokeAccess($normalized)) {
                 return $this->revokeAccess($tenantId, $normalized, $course, $credential);
             }
 
-            if ($this->isGrantEvent($event)) {
+            if ($this->hasValidStudentEmail($normalized)) {
                 return $this->grantAccess($tenantId, $normalized, $course, $credential);
             }
 
-            throw new \InvalidArgumentException('Evento não suportado: '.$event);
+            throw new \InvalidArgumentException('E-mail inválido ou ausente.');
         } catch (\Throwable $e) {
             $this->writeLog(
                 $tenantId,
@@ -161,6 +136,10 @@ class EnrollmentWebhookService
                     $user,
                     $course,
                     $isNewUser ? $plainPassword : null,
+                    [
+                        'platform' => $data['platform'] !== '' ? $data['platform'] : null,
+                        'transaction_id' => $data['transaction_id'],
+                    ],
                 );
             }
 
@@ -290,22 +269,37 @@ class EnrollmentWebhookService
      */
     private function resolveCourse(int $tenantId, array $data, ?EnrollmentWebhookCredential $credential = null): Product
     {
-        $courseId = $data['course_id'];
+        $platform = $data['platform'] !== '' ? $data['platform'] : ($credential?->platform ?? '');
+        $payloadExternalId = $data['external_product_id'] ?? null;
+        $courseId = null;
 
-        if (($courseId === null || $courseId === '') && $credential?->product_id) {
+        if ($credential?->product_id) {
             $courseId = $credential->product_id;
         }
 
-        if ($courseId === null || $courseId === '') {
-            $platform = $data['platform'] !== '' ? $data['platform'] : ($credential?->platform ?? '');
-            $externalId = $data['external_product_id'] ?? $credential?->external_product_id;
+        if (($courseId === null || $courseId === '') && ($data['course_id'] ?? null)) {
+            $courseId = $data['course_id'];
+        }
 
-            if ($platform !== '' && $externalId !== null && $externalId !== '') {
-                $courseId = EnrollmentExternalProductMapping::resolveProductId(
-                    $tenantId,
-                    $platform,
-                    $externalId
-                );
+        if (($courseId === null || $courseId === '') && $platform !== '' && $payloadExternalId !== null && $payloadExternalId !== '') {
+            $mappedCourseId = EnrollmentExternalProductMapping::resolveProductId(
+                $tenantId,
+                $platform,
+                $payloadExternalId
+            );
+            if ($mappedCourseId !== null && $mappedCourseId !== '') {
+                $courseId = $mappedCourseId;
+            }
+        }
+
+        if (($courseId === null || $courseId === '') && $platform !== '' && $credential?->external_product_id) {
+            $mappedCourseId = EnrollmentExternalProductMapping::resolveProductId(
+                $tenantId,
+                $platform,
+                $credential->external_product_id
+            );
+            if ($mappedCourseId !== null && $mappedCourseId !== '') {
+                $courseId = $mappedCourseId;
             }
         }
 
@@ -342,19 +336,50 @@ class EnrollmentWebhookService
         }
     }
 
-    private function isGrantEvent(string $event): bool
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function hasValidStudentEmail(array $data): bool
     {
-        return in_array($event, config('enrollment_webhook.grant_events', []), true);
+        $email = strtolower(trim((string) ($data['email'] ?? '')));
+
+        return $email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function shouldRevokeAccess(array $data): bool
+    {
+        $event = strtolower(trim((string) ($data['event'] ?? '')));
+        $status = strtolower(trim((string) ($data['status'] ?? '')));
+
+        if ($event !== '' && $this->isRevokeEvent($event)) {
+            return true;
+        }
+
+        $revokeTokens = [
+            'refund',
+            'refunded',
+            'chargeback',
+            'canceled',
+            'cancelled',
+            'subscription_canceled',
+            'subscription_expired',
+        ];
+
+        foreach ($revokeTokens as $token) {
+            if ($event !== '' && str_contains($event, $token)) {
+                return true;
+            }
+        }
+
+        return in_array($status, ['refunded', 'chargeback', 'canceled', 'cancelled'], true);
     }
 
     private function isRevokeEvent(string $event): bool
     {
         return in_array($event, config('enrollment_webhook.revoke_events', []), true);
-    }
-
-    private function isIgnoredEvent(string $event): bool
-    {
-        return $event === '';
     }
 
     /**
@@ -378,6 +403,7 @@ class EnrollmentWebhookService
             'status' => $data['status'] !== '' ? $data['status'] : null,
             'transaction_id' => $data['transaction_id'],
             'course_id' => $courseId,
+            'external_product_id' => $data['external_product_id'] ?? null,
             'hub_id' => $data['hub_id'],
             'email' => $data['email'] !== '' ? $data['email'] : null,
             'payload' => $data['raw'],

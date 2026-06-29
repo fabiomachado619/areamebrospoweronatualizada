@@ -62,7 +62,13 @@ class Product extends Model
     {
         static::creating(function (Product $product): void {
             if (empty($product->id)) {
-                $product->id = (string) Str::uuid();
+                if ($product->getConnection()->getDriverName() === 'sqlite') {
+                    // Migrations de UUID em products são só MySQL/MariaDB; SQLite local/teste usa id inteiro.
+                    $product->incrementing = true;
+                    $product->keyType = 'int';
+                } else {
+                    $product->id = (string) Str::uuid();
+                }
             }
             if (empty($product->checkout_slug)) {
                 $product->checkout_slug = static::generateUniqueCheckoutSlug();

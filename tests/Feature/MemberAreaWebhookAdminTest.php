@@ -213,8 +213,10 @@ class MemberAreaWebhookAdminTest extends TestCase
             ->assertJson(['success' => false, 'message' => 'Webhook não encontrado.']);
     }
 
-    public function test_course_from_other_tenant_is_blocked_via_unique_url(): void
+    public function test_payload_course_from_other_tenant_is_ignored_when_webhook_has_manual_course(): void
     {
+        Mail::fake();
+
         $course = $this->createCourse();
         $issued = EnrollmentWebhookCredential::createWebhook(
             tenantId: 1,
@@ -238,10 +240,16 @@ class MemberAreaWebhookAdminTest extends TestCase
             'transaction_id' => 'tx-block-'.uniqid(),
         ]);
 
-        $response->assertStatus(422)
-            ->assertJson(['success' => false]);
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'course_id' => (string) $course->id,
+            ]);
 
-        $this->assertStringContainsString('tenant', strtolower($response->json('message')));
+        $user = User::query()->where('email', 'blocked@example.com')->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
+        $this->assertFalse($otherCourse->users()->where('users.id', $user->id)->exists());
     }
 
     public function test_other_tenant_cannot_update_webhook(): void
@@ -366,7 +374,7 @@ class MemberAreaWebhookAdminTest extends TestCase
         ]);
     }
 
-    public function test_duplicate_payload_does_not_resend_email_with_unique_url(): void
+    public function test_duplicate_payload_resends_email_on_replay_with_unique_url(): void
     {
         Mail::fake();
 
@@ -390,13 +398,11 @@ class MemberAreaWebhookAdminTest extends TestCase
 
         $this->postWebhookByUrl($issued['model']->webhook_key, $payload)->assertOk();
 
-        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
-
         $this->postWebhookByUrl($issued['model']->webhook_key, $payload)
             ->assertOk()
-            ->assertJson(['duplicate' => true, 'email_sent' => false]);
+            ->assertJson(['duplicate' => true, 'email_sent' => true]);
 
-        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 2);
     }
 
     public function test_notascast_body_format_enrolls_via_unique_url(): void
@@ -456,6 +462,57 @@ class MemberAreaWebhookAdminTest extends TestCase
         $response->assertOk()->assertJson(['success' => true, 'action' => 'enrolled']);
     }
 
+    public function test_hotmart_body_format_enrolls_via_unique_url(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Hotmart',
+            productId: $course->id,
+            platform: 'hotmart',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $email = 'hotmart-'.uniqid().'@example.com';
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'body' => [
+                'event' => 'PURCHASE_COMPLETE',
+                'data' => [
+                    'product' => [
+                        'id' => 0,
+                        'ucode' => 'fb056612-bcc6-4217-9e6d-2a5d1110ac2f',
+                        'name' => 'Produto Hotmart',
+                    ],
+                    'purchase' => [
+                        'transaction' => 'HP'.uniqid(),
+                        'status' => 'COMPLETED',
+                    ],
+                    'buyer' => [
+                        'name' => 'Comprador Hotmart',
+                        'email' => $email,
+                        'checkout_phone' => '99999999900',
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => EnrollmentWebhookLog::ACTION_ENROLLED,
+                'course_id' => (string) $course->id,
+            ]);
+
+        $user = User::query()->where('email', $email)->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class);
+    }
+
     public function test_missing_email_returns_clear_error(): void
     {
         $course = $this->createCourse();
@@ -482,7 +539,7 @@ class MemberAreaWebhookAdminTest extends TestCase
             ]);
     }
 
-    public function test_poweron_pending_payload_is_ignored_without_enrollment(): void
+    public function test_poweron_pending_payload_enrolls_when_email_present(): void
     {
         Mail::fake();
 
@@ -522,26 +579,15 @@ class MemberAreaWebhookAdminTest extends TestCase
         $response->assertOk()
             ->assertJson([
                 'success' => true,
-                'action' => EnrollmentWebhookLog::ACTION_IGNORED,
+                'action' => EnrollmentWebhookLog::ACTION_ENROLLED,
+                'email_sent' => true,
             ]);
 
-        $this->assertNull(User::query()->where('email', $email)->first());
-        $this->assertFalse($course->users()->exists());
+        $user = User::query()->where('email', $email)->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
 
-        $this->assertDatabaseHas('enrollment_webhook_logs', [
-            'enrollment_webhook_id' => $issued['model']->id,
-            'email' => $email,
-            'action' => EnrollmentWebhookLog::ACTION_IGNORED,
-            'error_message' => 'Evento ignorado por não ser status aprovado.',
-        ]);
-
-        $this->assertDatabaseMissing('enrollment_webhook_logs', [
-            'enrollment_webhook_id' => $issued['model']->id,
-            'email' => $email,
-            'action' => EnrollmentWebhookLog::ACTION_ERROR,
-        ]);
-
-        Mail::assertNothingSent();
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class, 1);
     }
 
     public function test_poweron_paid_payload_enrolls_via_unique_url(): void
@@ -592,6 +638,187 @@ class MemberAreaWebhookAdminTest extends TestCase
         $this->assertNotNull($user);
         $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
 
+        Mail::assertSent(\App\Mail\AccessGrantedMail::class);
+    }
+
+    public function test_probe_empty_body_returns_200_without_enrollment(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Probe Empty',
+            productId: $course->id,
+            platform: 'wiapy',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, []);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Webhook received',
+                'action' => EnrollmentWebhookLog::ACTION_IGNORED,
+            ]);
+
+        $this->assertSame(0, User::query()->count());
+        Mail::assertNothingSent();
+    }
+
+    public function test_probe_event_test_returns_200_without_enrollment(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Probe Test',
+            productId: $course->id,
+            platform: 'wiapy',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'event' => 'test',
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Webhook received',
+                'action' => EnrollmentWebhookLog::ACTION_IGNORED,
+            ]);
+
+        Mail::assertNothingSent();
+        $this->assertFalse($course->users()->exists());
+    }
+
+    public function test_probe_event_ping_and_webhook_test_return_200(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Probe Ping',
+            productId: $course->id,
+            platform: 'wiapy',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        foreach (['ping', 'webhook.test'] as $event) {
+            $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+                'event' => $event,
+            ])->assertOk()->assertJson([
+                'success' => true,
+                'message' => 'Webhook received',
+            ]);
+        }
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_wiapy_partial_payload_without_email_returns_422(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Wiapy Partial',
+            productId: $course->id,
+            platform: 'wiapy',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'data' => [
+                'payment' => ['status' => 'paid'],
+                'customer' => [],
+            ],
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+                'message' => 'E-mail não encontrado no payload.',
+            ]);
+
+        Mail::assertNothingSent();
+        $this->assertFalse($course->users()->exists());
+    }
+
+    public function test_get_and_head_webhook_url_return_200(): void
+    {
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Probe GET',
+            productId: $course->id,
+            platform: 'wiapy',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $url = '/api/webhooks/enrollment/'.$issued['model']->webhook_key;
+
+        $this->getJson($url)->assertOk()->assertJson([
+            'success' => true,
+            'message' => 'Webhook received',
+        ]);
+
+        $this->call('HEAD', $url)->assertOk();
+    }
+
+    public function test_wiapy_paid_payload_enrolls_via_unique_url(): void
+    {
+        Mail::fake();
+
+        $course = $this->createCourse();
+        $issued = EnrollmentWebhookCredential::createWebhook(
+            tenantId: 1,
+            name: 'Wiapy Pago',
+            productId: $course->id,
+            platform: 'wiapy',
+            externalProductId: null,
+            isActive: true,
+        );
+
+        $email = 'wiapy-paid-'.uniqid().'@example.com';
+
+        $response = $this->postJson('/api/webhooks/enrollment/'.$issued['model']->webhook_key, [
+            'data' => [
+                'payment' => [
+                    'id' => 'pay-'.uniqid(),
+                    'status' => 'paid',
+                ],
+                'customer' => [
+                    'name' => 'Cliente Wiapy',
+                    'email' => $email,
+                    'mobile_phone' => '(11) 99999-9999',
+                ],
+                'products' => [
+                    ['id' => 'prod-wiapy-1', 'title' => 'Curso Wiapy'],
+                ],
+            ],
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'action' => EnrollmentWebhookLog::ACTION_ENROLLED,
+                'course_id' => (string) $course->id,
+            ]);
+
+        $user = User::query()->where('email', $email)->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($course->users()->where('users.id', $user->id)->exists());
         Mail::assertSent(\App\Mail\AccessGrantedMail::class);
     }
 }

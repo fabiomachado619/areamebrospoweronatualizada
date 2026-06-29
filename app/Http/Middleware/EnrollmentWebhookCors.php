@@ -14,7 +14,7 @@ class EnrollmentWebhookCors
 {
     private const ALLOW_ORIGIN = '*';
 
-    private const ALLOW_METHODS = 'POST, OPTIONS';
+    private const ALLOW_METHODS = 'GET, HEAD, POST, OPTIONS';
 
     private const ALLOW_HEADERS = 'Authorization, Content-Type, X-Signature, Accept, Origin, X-Requested-With';
 

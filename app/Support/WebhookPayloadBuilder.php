@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\ProductOffer;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
+use App\Models\User;
 use Illuminate\Support\Facades\URL;
 
 class WebhookPayloadBuilder
@@ -29,7 +30,7 @@ class WebhookPayloadBuilder
     ];
 
     /** @var list<string> */
-    private const KEYS_ALLOW_NULL = ['birthDate'];
+    private const KEYS_ALLOW_NULL = ['birthDate', 'phone'];
 
     /** Chaves que nunca devem ir para webhooks de integração (PII técnico / infra). */
     private const DENIED_PAYLOAD_KEYS = [
@@ -116,6 +117,80 @@ class WebhookPayloadBuilder
         );
 
         return self::sanitizePayload($payload);
+    }
+
+    /**
+     * Payload do evento "Envio de acesso (pós-aprovação)" para um aluno e curso específicos.
+     *
+     * @param  array{type?:string, link?:string, email?:string, password?:string, product_type?:string}  $access
+     * @param  array{source?:string, transaction_id?:string|null, platform?:string|null, sent_at?:string}  $context
+     * @return array<string, mixed>
+     */
+    public static function forAccessDeliveryReady(
+        User $user,
+        Product $product,
+        array $access = [],
+        array $context = [],
+        ?Order $order = null,
+    ): array {
+        $user->loadMissing([]);
+        $product->loadMissing([]);
+
+        $sentAt = $context['sent_at'] ?? now()->toIso8601String();
+
+        $payload = [
+            'student' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => self::resolveStudentPhone($user, $order),
+            ],
+            'product' => [
+                'id' => (string) $product->id,
+                'title' => $product->name,
+            ],
+            'source' => (string) ($context['source'] ?? 'unknown'),
+            'sent_at' => $sentAt,
+            'access' => self::sanitizeExtras($access),
+        ];
+
+        if (! empty($context['transaction_id'])) {
+            $payload['transaction_id'] = (string) $context['transaction_id'];
+        }
+
+        if (! empty($context['platform'])) {
+            $payload['platform'] = (string) $context['platform'];
+        }
+
+        if ($order !== null) {
+            $orderPayload = self::forOrderEvent($order, self::sanitizeExtras(['access' => $access]));
+            $payload = array_merge($orderPayload, $payload);
+        }
+
+        return self::sanitizePayload($payload);
+    }
+
+    /**
+     * Telefone do aluno: prioriza users.phone, depois orders.phone (checkout).
+     * Retorna dígitos normalizados ou null — nunca quebra o payload.
+     */
+    private static function resolveStudentPhone(User $user, ?Order $order = null): ?string
+    {
+        $candidates = [$user->phone];
+        if ($order !== null) {
+            $candidates[] = $order->phone;
+        }
+
+        foreach ($candidates as $candidate) {
+            $normalized = WebhookPiiHasher::normalizePhoneDigits(
+                is_string($candidate) ? $candidate : null
+            );
+            if ($normalized !== null) {
+                return $normalized;
+            }
+        }
+
+        return null;
     }
 
     /**

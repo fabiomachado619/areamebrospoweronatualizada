@@ -24,6 +24,7 @@ class EnrollmentWebhookLog extends Model
         'status',
         'transaction_id',
         'course_id',
+        'external_product_id',
         'hub_id',
         'email',
         'payload',
@@ -46,19 +47,28 @@ class EnrollmentWebhookLog extends Model
         int $tenantId,
         ?string $platform,
         ?string $transactionId,
-        ?string $event
+        ?string $event,
+        ?string $courseId = null,
+        ?string $externalProductId = null,
     ): ?self {
         if ($platform === null || $platform === '' || $transactionId === null || $transactionId === '' || $event === null || $event === '') {
             return null;
         }
 
-        return static::query()
+        $query = static::query()
             ->where('tenant_id', $tenantId)
             ->where('platform', $platform)
             ->where('transaction_id', $transactionId)
             ->where('event', $event)
-            ->whereIn('action', [self::ACTION_ENROLLED, self::ACTION_REVOKED, self::ACTION_DUPLICATE])
-            ->first();
+            ->whereIn('action', [self::ACTION_ENROLLED, self::ACTION_REVOKED, self::ACTION_DUPLICATE]);
+
+        if ($courseId !== null && $courseId !== '') {
+            $query->where('course_id', $courseId);
+        } elseif ($externalProductId !== null && $externalProductId !== '') {
+            $query->where('external_product_id', $externalProductId);
+        }
+
+        return $query->first();
     }
 
     public function credential(): \Illuminate\Database\Eloquent\Relations\BelongsTo

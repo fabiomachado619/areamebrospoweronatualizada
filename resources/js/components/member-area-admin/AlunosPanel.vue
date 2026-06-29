@@ -32,7 +32,7 @@ const productFilterOpen = ref(false);
 const novoAlunoForm = ref({
     name: '',
     email: '',
-    password: '',
+    phone: '',
     product_ids: [],
     send_access_email: true,
 });
@@ -142,7 +142,7 @@ function handleAlunoDeleted(id) {
 }
 
 function openNovoAluno() {
-    novoAlunoForm.value = { name: '', email: '', password: '', product_ids: [], send_access_email: true };
+    novoAlunoForm.value = { name: '', email: '', phone: '', product_ids: [], send_access_email: true };
     novoAlunoModalOpen.value = true;
 }
 
@@ -218,14 +218,17 @@ function toggleNovoProduct(id) {
 }
 
 async function saveNovoAluno() {
-    if (!novoAlunoForm.value.name?.trim() || !novoAlunoForm.value.email?.trim() || !novoAlunoForm.value.password) {
-        showToast('Preencha nome, e-mail e senha.', 'error');
+    if (!novoAlunoForm.value.name?.trim() || !novoAlunoForm.value.email?.trim()) {
+        showToast('Preencha nome e e-mail.', 'error');
         return;
     }
     savingNovo.value = true;
     try {
         const { data } = await axios.post('/produtos/alunos', {
-            ...novoAlunoForm.value,
+            name: novoAlunoForm.value.name,
+            email: novoAlunoForm.value.email,
+            phone: novoAlunoForm.value.phone?.trim() || null,
+            product_ids: novoAlunoForm.value.product_ids,
             send_access_email: novoAlunoForm.value.send_access_email ?? true,
         });
         showToast(data.message ?? 'Aluno cadastrado com sucesso.', 'success');
@@ -610,15 +613,15 @@ onUnmounted(() => {
                         </div>
                         <div class="space-y-2">
                             <label class="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                                Senha
+                                WhatsApp (opcional)
                             </label>
                             <input
-                                v-model="novoAlunoForm.password"
-                                type="password"
-                                name="novo_aluno_password"
-                                autocomplete="new-password"
+                                v-model="novoAlunoForm.phone"
+                                type="tel"
+                                name="novo_aluno_phone"
+                                autocomplete="tel"
                                 class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                                placeholder="Mínimo 6 caracteres"
+                                placeholder="(11) 99999-9999"
                             />
                         </div>
                         <div class="space-y-2">

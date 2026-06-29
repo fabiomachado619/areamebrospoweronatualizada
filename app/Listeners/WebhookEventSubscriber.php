@@ -88,7 +88,9 @@ class WebhookEventSubscriber
                 }
 
                 try {
-                    if ($dispatchSync) {
+                    if ($eventClass === AccessDeliveryReady::class) {
+                        DispatchWebhookJob::dispatchSync($webhook->id, $eventClass, $payload);
+                    } elseif ($dispatchSync) {
                         DispatchWebhookJob::dispatchAfterResponse($webhook->id, $eventClass, $payload);
                     } else {
                         DispatchWebhookJob::dispatch($webhook->id, $eventClass, $payload);
@@ -144,9 +146,30 @@ class WebhookEventSubscriber
         }
 
         if ($event instanceof AccessDeliveryReady) {
-            return WebhookPayloadBuilder::forOrderEvent($event->order, WebhookPayloadBuilder::sanitizeExtras([
-                'access' => is_array($event->access) ? $event->access : [],
-            ]));
+            $user = $event->user;
+            $product = $event->product;
+            if ($event->order !== null) {
+                $user = $user ?? $event->order->user;
+                $product = $product ?? $event->order->product;
+            }
+
+            if ($user instanceof \App\Models\User && $product instanceof \App\Models\Product) {
+                return WebhookPayloadBuilder::forAccessDeliveryReady(
+                    $user,
+                    $product,
+                    is_array($event->access) ? $event->access : [],
+                    is_array($event->context) ? $event->context : [],
+                    $event->order,
+                );
+            }
+
+            if ($event->order !== null) {
+                return WebhookPayloadBuilder::forOrderEvent($event->order, WebhookPayloadBuilder::sanitizeExtras([
+                    'access' => is_array($event->access) ? $event->access : [],
+                ]));
+            }
+
+            return [];
         }
 
         if ($event instanceof CartAbandoned) {
@@ -199,6 +222,28 @@ class WebhookEventSubscriber
      */
     private function getTenantIdsFromEvent(object $event): array
     {
+        if ($event instanceof AccessDeliveryReady) {
+            $ids = [];
+            if ($event->product !== null && $event->product->tenant_id !== null) {
+                $ids[] = (int) $event->product->tenant_id;
+            }
+            if ($event->user !== null && $event->user->tenant_id !== null) {
+                $ids[] = (int) $event->user->tenant_id;
+            }
+            if ($event->order !== null) {
+                $orderTenant = $event->order->tenant_id;
+                if ($orderTenant === null && $event->order->relationLoaded('product') === false) {
+                    $event->order->loadMissing('product:id,tenant_id');
+                }
+                $orderTenant = $orderTenant ?? $event->order->product?->tenant_id;
+                if ($orderTenant !== null) {
+                    $ids[] = (int) $orderTenant;
+                }
+            }
+
+            return array_values(array_unique(array_filter($ids)));
+        }
+
         $ids = [];
         foreach ((array) $event as $value) {
             if ($value instanceof Model) {
@@ -266,6 +311,10 @@ class WebhookEventSubscriber
             || $event instanceof OrderRejected || $event instanceof OrderCancelled
             || $event instanceof OrderRefunded || $event instanceof PixGenerated
             || $event instanceof BoletoGenerated || $event instanceof AccessDeliveryReady) {
+            if ($event instanceof AccessDeliveryReady) {
+                return $event->product?->id ?? $event->order?->product_id;
+            }
+
             return $event->order?->product_id;
         }
 

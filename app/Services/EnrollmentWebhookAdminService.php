@@ -48,7 +48,7 @@ class EnrollmentWebhookAdminService
             'webhook_logs' => $logs,
             'webhook_url_pattern' => url('/api/webhooks/enrollment/{webhook_key}'),
             'webhook_course_options' => $courses,
-            'webhook_platform_options' => ['kiwify', 'hotmart', 'cartpanda', 'manual', 'outro'],
+            'webhook_platform_options' => ['kiwify', 'hotmart', 'gg_checkout', 'cartpanda', 'manual', 'outro'],
         ];
     }
 
