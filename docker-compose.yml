@@ -1,3 +1,7 @@
+# Stack base (app + MySQL + Redis + queue). O app expõe a porta 80 só na rede Docker.
+# Standalone (homolog / dev sem Caddy): docker-compose.hostports.yml publica ${GETFY_HTTP_PORT:-80}:80 no host.
+# Produção com Caddy: docker-compose.prod.yml publica 80/443 no Caddy e faz proxy para app:80.
+
 services:
   app:
     build:
@@ -5,8 +9,8 @@ services:
       dockerfile: Dockerfile
     image: getfy_app:latest
     restart: unless-stopped
-    ports:
-      - "${GETFY_HTTP_PORT:-80}:80"
+    expose:
+      - "80"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/up >/dev/null || exit 1"]
       interval: 15s

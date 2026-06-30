@@ -61,6 +61,7 @@ if (!(Test-Path $envFile)) {
         GETFY_QUEUE_WORKER_MAX_TIME = if ($env:GETFY_QUEUE_WORKER_MAX_TIME) { $env:GETFY_QUEUE_WORKER_MAX_TIME } else { "3600" }
         GETFY_QUEUE_WORKER_MAX_JOBS = if ($env:GETFY_QUEUE_WORKER_MAX_JOBS) { $env:GETFY_QUEUE_WORKER_MAX_JOBS } else { "1000" }
         GETFY_CADDY_HOST = if ($env:GETFY_CADDY_HOST) { $env:GETFY_CADDY_HOST } else { ":80" }
+        GETFY_COMPOSE_FILES = if ($env:GETFY_COMPOSE_FILES) { $env:GETFY_COMPOSE_FILES } else { "docker-compose.yml;docker-compose.hostports.yml" }
     }
 } else {
     $content = Get-Content $envFile -Raw
@@ -79,11 +80,49 @@ if (!(Test-Path $envFile)) {
     }
 }
 
-$composeFilesRaw = if ($env:GETFY_COMPOSE_FILES) { $env:GETFY_COMPOSE_FILES } else { "docker-compose.yml" }
+if (Test-Path $envFile) {
+    $lines = Get-Content $envFile
+    $changed = $false
+    $newLines = @()
+    $hasComposeFiles = $false
+    foreach ($line in $lines) {
+        if ($line -match '^\s*GETFY_COMPOSE_FILES\s*=\s*docker-compose\.caddy\.yml\s*$') {
+            $newLines += 'GETFY_COMPOSE_FILES=docker-compose.yml;docker-compose.prod.yml'
+            $changed = $true
+            $hasComposeFiles = $true
+            continue
+        }
+        if ($line -match '^\s*GETFY_COMPOSE_FILES\s*=') {
+            $hasComposeFiles = $true
+            if ($line -match '^\s*GETFY_COMPOSE_FILES\s*=\s*docker-compose\.yml\s*$') {
+                $newLines += 'GETFY_COMPOSE_FILES=docker-compose.yml;docker-compose.hostports.yml'
+                $changed = $true
+                continue
+            }
+        }
+        $newLines += $line
+    }
+    if (-not $hasComposeFiles) {
+        $newLines += 'GETFY_COMPOSE_FILES=docker-compose.yml;docker-compose.hostports.yml'
+        $changed = $true
+    }
+    if ($changed) {
+        Set-Content -Path $envFile -Value ($newLines -join "`n")
+    }
+}
+
+$composeFilesRaw = if ($env:GETFY_COMPOSE_FILES) { $env:GETFY_COMPOSE_FILES } elseif (Test-Path $envFile) {
+    $match = Select-String -Path $envFile -Pattern '^\s*GETFY_COMPOSE_FILES\s*=\s*(.+)\s*$' | Select-Object -First 1
+    if ($match) { $match.Matches[0].Groups[1].Value.Trim() } else { "docker-compose.yml;docker-compose.hostports.yml" }
+} else { "docker-compose.yml;docker-compose.hostports.yml" }
 $composeFiles = $composeFilesRaw -split ';' | Where-Object { $_ -and $_.Trim() -ne "" } | ForEach-Object { $_.Trim() }
 $composeArgs = @()
 foreach ($f in $composeFiles) {
     $composeArgs += @("-f", $f)
 }
 
-docker compose @composeArgs --env-file $envFile up --build -d
+docker compose @composeArgs --env-file $envFile up --build -d --remove-orphans
+
+if ($composeFilesRaw -match 'docker-compose\.prod\.yml') {
+    docker compose @composeArgs --env-file $envFile up -d --force-recreate caddy
+}

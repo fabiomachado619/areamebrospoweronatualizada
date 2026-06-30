@@ -147,7 +147,7 @@ $SUDO chmod +x docker/up.sh >/dev/null 2>&1 || true
 export GETFY_QUEUE_CONNECTION="${GETFY_QUEUE_CONNECTION:-database}"
 export GETFY_CACHE_STORE="${GETFY_CACHE_STORE:-file}"
 export GETFY_SESSION_DRIVER="${GETFY_SESSION_DRIVER:-file}"
-export GETFY_COMPOSE_FILES="${GETFY_COMPOSE_FILES:-docker-compose.no-redis.yml}"
+export GETFY_COMPOSE_FILES="${GETFY_COMPOSE_FILES:-docker-compose.no-redis.yml;docker-compose.hostports.yml}"
 
 if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "(^|:)$HTTP_PORT$"; then
   echo "Aviso: porta $HTTP_PORT parece estar em uso. Se o compose falhar, mude GETFY_HTTP_PORT." >&2

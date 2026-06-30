@@ -5,8 +5,8 @@ services:
       dockerfile: Dockerfile
     image: getfy_app:latest
     restart: unless-stopped
-    ports:
-      - "${GETFY_HTTP_PORT:-80}:80"
+    expose:
+      - "80"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/up >/dev/null || exit 1"]
       interval: 15s

@@ -1,0 +1,27 @@
+# Sobreposição para produção: Caddy na borda (HTTPS via ACME). O app não publica portas no host.
+# Use: GETFY_COMPOSE_FILES=docker-compose.yml;docker-compose.prod.yml
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${GETFY_HTTP_PORT:-80}:80"
+      - "${GETFY_HTTPS_PORT:-443}:443"
+    environment:
+      GETFY_CADDY_HOST: ${GETFY_CADDY_HOST:-:80}
+    env_file:
+      - .docker/stack.env
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local

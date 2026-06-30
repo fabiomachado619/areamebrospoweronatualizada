@@ -41,6 +41,7 @@ GETFY_QUEUE_WORKER_MEMORY=${GETFY_QUEUE_WORKER_MEMORY:-128}
 GETFY_QUEUE_WORKER_MAX_TIME=${GETFY_QUEUE_WORKER_MAX_TIME:-3600}
 GETFY_QUEUE_WORKER_MAX_JOBS=${GETFY_QUEUE_WORKER_MAX_JOBS:-1000}
 GETFY_CADDY_HOST=${GETFY_CADDY_HOST:-:80}
+GETFY_COMPOSE_FILES=${GETFY_COMPOSE_FILES:-docker-compose.yml;docker-compose.hostports.yml}
 EOF
 else
   if grep -Eq '^\s*GETFY_DB_USERNAME\s*=\s*$' "$ENV_FILE" || grep -Eq '^\s*GETFY_DB_PASSWORD\s*=\s*$' "$ENV_FILE" \
@@ -69,7 +70,54 @@ else
   fi
 fi
 
-COMPOSE_FILES="${GETFY_COMPOSE_FILES:-docker-compose.yml}"
+# Migra stack legada (monolito Caddy ou base sem overlay) para overlays explícitos.
+if [ -f "$ENV_FILE" ]; then
+  if grep -Eq '^[[:space:]]*GETFY_COMPOSE_FILES[[:space:]]*=[[:space:]]*docker-compose\.caddy\.yml[[:space:]]*$' "$ENV_FILE"; then
+    TMP_CF="$(mktemp)"
+    awk '
+      $0 ~ /^[[:space:]]*GETFY_COMPOSE_FILES[[:space:]]*=[[:space:]]*docker-compose\.caddy\.yml[[:space:]]*$/ {
+        print "GETFY_COMPOSE_FILES=docker-compose.yml;docker-compose.prod.yml"
+        next
+      }
+      { print }
+    ' "$ENV_FILE" > "$TMP_CF"
+    mv "$TMP_CF" "$ENV_FILE"
+  fi
+  if ! grep -Eq '^\s*GETFY_COMPOSE_FILES\s*=' "$ENV_FILE"; then
+    echo "GETFY_COMPOSE_FILES=docker-compose.yml;docker-compose.hostports.yml" >> "$ENV_FILE"
+  fi
+  if grep -Eq '^[[:space:]]*GETFY_COMPOSE_FILES[[:space:]]*=[[:space:]]*docker-compose\.yml[[:space:]]*$' "$ENV_FILE"; then
+    TMP_CF="$(mktemp)"
+    awk '
+      $0 ~ /^[[:space:]]*GETFY_COMPOSE_FILES[[:space:]]*=[[:space:]]*docker-compose\.yml[[:space:]]*$/ {
+        print "GETFY_COMPOSE_FILES=docker-compose.yml;docker-compose.hostports.yml"
+        next
+      }
+      { print }
+    ' "$ENV_FILE" > "$TMP_CF"
+    mv "$TMP_CF" "$ENV_FILE"
+  fi
+  if grep -Eq '^[[:space:]]*GETFY_COMPOSE_FILES[[:space:]]*=[[:space:]]*docker-compose\.no-redis\.yml[[:space:]]*$' "$ENV_FILE"; then
+    TMP_CF="$(mktemp)"
+    awk '
+      $0 ~ /^[[:space:]]*GETFY_COMPOSE_FILES[[:space:]]*=[[:space:]]*docker-compose\.no-redis\.yml[[:space:]]*$/ {
+        print "GETFY_COMPOSE_FILES=docker-compose.no-redis.yml;docker-compose.hostports.yml"
+        next
+      }
+      { print }
+    ' "$ENV_FILE" > "$TMP_CF"
+    mv "$TMP_CF" "$ENV_FILE"
+  fi
+fi
+
+if [ -n "${GETFY_COMPOSE_FILES:-}" ]; then
+  COMPOSE_FILES="$GETFY_COMPOSE_FILES"
+elif [ -f "$ENV_FILE" ]; then
+  COMPOSE_FILES="$(grep -E '^GETFY_COMPOSE_FILES=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  COMPOSE_FILES="${COMPOSE_FILES:-docker-compose.yml;docker-compose.hostports.yml}"
+else
+  COMPOSE_FILES="docker-compose.yml;docker-compose.hostports.yml"
+fi
 COMPOSE_ARGS=""
 OLD_IFS="$IFS"
 IFS=';'
@@ -80,4 +128,10 @@ for f in $COMPOSE_FILES; do
 done
 IFS="$OLD_IFS"
 
-docker compose $COMPOSE_ARGS --env-file "$ENV_FILE" up --build -d
+docker compose $COMPOSE_ARGS --env-file "$ENV_FILE" up --build -d --remove-orphans
+
+case "$COMPOSE_FILES" in
+  *docker-compose.prod.yml*)
+    docker compose $COMPOSE_ARGS --env-file "$ENV_FILE" up -d --force-recreate caddy
+    ;;
+esac

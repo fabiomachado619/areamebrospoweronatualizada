@@ -132,7 +132,7 @@ if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "(^|:)$HTTPS_PORT$"; then
   echo "Aviso: porta $HTTPS_PORT parece estar em uso. Se o compose falhar, mude GETFY_HTTPS_PORT." >&2
 fi
 
-$SUDO env GETFY_COMPOSE_FILES="docker-compose.caddy.yml" sh docker/up.sh
+$SUDO env GETFY_COMPOSE_FILES="docker-compose.yml;docker-compose.prod.yml" sh docker/up.sh
 
 IP="$(curl -fsSL https://api.ipify.org 2>/dev/null || true)"
 if [ -z "$IP" ]; then
