@@ -90,12 +90,24 @@ $cronSecret = $existingCronSecret;
 if (!is_string($cronSecret) || $cronSecret === "") {
     $cronSecret = rtrim(strtr(base64_encode(random_bytes(24)), "+/", "-_"), "=");
 }
-$appUrl = $setupDone ? ($sharedAppUrl !== "" ? $sharedAppUrl : $existingAppUrl) : ((getenv("GETFY_APP_URL") ?: getenv("APP_URL")) ?: "http://localhost");
-$parts = parse_url((string) $appUrl);
-$scheme = strtolower((string) ($parts["scheme"] ?? ""));
-$host = strtolower((string) ($parts["host"] ?? ""));
-if ($scheme === "http" && $host !== "" && $host !== "localhost" && $host !== "127.0.0.1" && $host !== "::1" && filter_var($host, FILTER_VALIDATE_IP) === false) {
-    $appUrl = "https://" . $host;
+$dockerAppUrl = trim((string) (getenv("GETFY_APP_URL") ?: getenv("APP_URL") ?: ""), " \t\n\r\0\x0B\"'`");
+$dockerAppUrl = str_replace(["\r", "\n", "\t"], "", $dockerAppUrl);
+
+// Prioridade: variável de ambiente do compose > .env existente > volume .docker/app.url > localhost
+if ($dockerAppUrl !== "" && ! in_array(strtolower($dockerAppUrl), ["http://localhost", "https://localhost"], true)) {
+    $appUrl = $dockerAppUrl;
+} elseif (is_string($existingAppUrl) && $existingAppUrl !== "") {
+    $appUrl = $existingAppUrl;
+} elseif ($setupDone && $sharedAppUrl !== "") {
+    $appUrl = $sharedAppUrl;
+} else {
+    $appUrl = $dockerAppUrl !== "" ? $dockerAppUrl : "http://localhost";
+}
+
+// Sincroniza URL pública no volume quando definida via compose (upgrade sem editar volume manualmente).
+if ($dockerAppUrl !== "" && ! in_array(strtolower($dockerAppUrl), ["http://localhost", "https://localhost"], true)) {
+    @mkdir(".docker", 0777, true);
+    @file_put_contents(".docker/app.url", $dockerAppUrl);
 }
 $vars = [
     "APP_NAME" => getenv("APP_NAME") ?: "Getfy",
@@ -163,10 +175,17 @@ if [ "$DB_OK" -ne 1 ]; then
   exit 1
 fi
 
+if [ ! -f vendor/autoload.php ]; then
+  echo "ERRO: vendor/autoload.php ausente. A imagem deve incluir vendor/ (composer install no build)."
+  exit 1
+fi
+
+if [ ! -f public/build/manifest.json ]; then
+  echo "ERRO: public/build/manifest.json ausente. A imagem deve incluir o build do Vite."
+  exit 1
+fi
+
 if [ "${GETFY_RUN_SETUP:-true}" = "true" ]; then
-  if [ ! -f vendor/autoload.php ]; then
-    composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts
-  fi
   php artisan package:discover --ansi
   php artisan migrate --force
   if ! php -r '

@@ -48,6 +48,11 @@ secrets/
 /storage/app/plugins-installed
 /plugins-installed
 .docker/plugins-installed
+.docker/app.url
+.docker/setup.done
+.docker/app.key
+.docker/pwa_vapid.env
+.docker/Caddyfile.domains
 
 # Backups, dumps e arquivos temporários
 /backups/
