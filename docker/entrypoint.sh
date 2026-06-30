@@ -155,23 +155,7 @@ foreach ($vars as $key => $value) {
 file_put_contents($envFile, $content);
 '
 
-DB_HOST="${DB_HOST:-mysql}"
-DB_PORT="${DB_PORT:-3306}"
-DB_DATABASE="${DB_DATABASE:-getfy}"
-DB_USERNAME="${DB_USERNAME:-${MYSQL_USER:-getfy}}"
-DB_PASSWORD="${DB_PASSWORD:-${MYSQL_PASSWORD:-getfy}}"
-
-DB_OK=0
-for i in $(seq 1 60); do
-  if php -r "try { new PDO('mysql:host=${DB_HOST};port=${DB_PORT};dbname=${DB_DATABASE}', '${DB_USERNAME}', '${DB_PASSWORD}', [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]); } catch (Throwable \$e) { exit(1); }" >/dev/null 2>&1; then
-    DB_OK=1
-    break
-  fi
-  sleep 1
-done
-
-if [ "$DB_OK" -ne 1 ]; then
-  echo "MySQL indisponível. Verifique DB_HOST/DB_PORT e o serviço mysql no compose."
+if ! php docker/wait-for-database.php; then
   exit 1
 fi
 

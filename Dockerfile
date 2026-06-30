@@ -47,7 +47,6 @@ RUN apk add --no-cache \
     curl \
     git \
     unzip \
-    mysql-client \
     freetype \
     libjpeg-turbo \
     libpng \
