@@ -90,7 +90,7 @@ $cronSecret = $existingCronSecret;
 if (!is_string($cronSecret) || $cronSecret === "") {
     $cronSecret = rtrim(strtr(base64_encode(random_bytes(24)), "+/", "-_"), "=");
 }
-$dockerAppUrl = trim((string) (getenv("GETFY_APP_URL") ?: getenv("APP_URL") ?: ""), " \t\n\r\0\x0B\"'`");
+$dockerAppUrl = trim((string) (getenv("GETFY_APP_URL") ?: getenv("APP_URL") ?: ""), " \t\n\r\0\x0B\"\x27`");
 $dockerAppUrl = str_replace(["\r", "\n", "\t"], "", $dockerAppUrl);
 
 // Prioridade: variável de ambiente do compose > .env existente > volume .docker/app.url > localhost
