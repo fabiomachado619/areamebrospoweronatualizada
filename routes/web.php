@@ -718,6 +718,7 @@ Route::prefix('m/{slug}')->where(['slug' => '[a-zA-Z0-9\-]{3,64}'])->middleware(
         Route::get('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'getLessonPdfAnnotations'])->name('member-area-app.lesson.pdf-annotations');
         Route::put('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'putLessonPdfAnnotations'])->middleware('throttle:120,1')->name('member-area-app.lesson.pdf-annotations.put');
         Route::post('aula/{lesson}/like', [\App\Http\Controllers\MemberAreaAppController::class, 'toggleLessonLike'])->middleware('throttle:60,1')->name('member-area-app.lesson.like');
+        Route::get('aula/{lesson}/next', [\App\Http\Controllers\MemberAreaAppController::class, 'nextLessonNavigation'])->name('member-area-app.lesson.next');
         Route::post('aula/{lesson}/complete', [\App\Http\Controllers\MemberAreaAppController::class, 'completeLesson'])->name('member-area-app.lesson.complete');
         Route::post('aula/{lesson}/comments', [\App\Http\Controllers\MemberAreaAppController::class, 'storeLessonComment'])->name('member-area-app.lesson.comments.store');
         Route::get('loja', [\App\Http\Controllers\MemberAreaAppController::class, 'loja'])->name('member-area-app.loja');
@@ -791,6 +792,7 @@ Route::middleware(['web', 'member.area.resolve.by.host'])->group(function () {
         Route::get('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'getLessonPdfAnnotations'])->name('member-area-app.lesson.pdf-annotations.host');
         Route::put('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'putLessonPdfAnnotations'])->middleware('throttle:120,1')->name('member-area-app.lesson.pdf-annotations.put.host');
         Route::post('aula/{lesson}/like', [\App\Http\Controllers\MemberAreaAppController::class, 'toggleLessonLike'])->middleware('throttle:60,1')->name('member-area-app.lesson.like.host');
+        Route::get('aula/{lesson}/next', [\App\Http\Controllers\MemberAreaAppController::class, 'nextLessonNavigation'])->name('member-area-app.lesson.next.host');
         Route::post('aula/{lesson}/complete', [\App\Http\Controllers\MemberAreaAppController::class, 'completeLesson'])->name('member-area-app.lesson.complete.host');
         Route::post('aula/{lesson}/comments', [\App\Http\Controllers\MemberAreaAppController::class, 'storeLessonComment'])->name('member-area-app.lesson.comments.store.host');
         Route::get('loja', [\App\Http\Controllers\MemberAreaAppController::class, 'loja'])->name('member-area-app.loja.host');

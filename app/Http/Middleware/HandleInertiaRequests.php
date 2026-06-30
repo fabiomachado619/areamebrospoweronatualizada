@@ -168,6 +168,7 @@ class HandleInertiaRequests extends Middleware
                 'status' => $request->session()->get('status'),
                 'zip_unavailable' => $request->session()->get('zip_unavailable'),
                 'newly_unlocked_achievements' => $request->session()->get('newly_unlocked_achievements'),
+                'lesson_completion_navigation' => $request->session()->get('lesson_completion_navigation'),
             ],
             'platform' => null,
             'cloud_mode' => (bool) config('getfy.cloud_mode', false),

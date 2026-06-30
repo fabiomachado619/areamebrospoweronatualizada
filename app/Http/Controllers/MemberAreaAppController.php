@@ -24,6 +24,7 @@ use App\Services\MemberAreaResolver;
 use App\Services\MemberCommentService;
 use App\Services\MemberAreaPwaAdminService;
 use App\Services\MemberHubService;
+use App\Services\MemberNavigationService;
 use App\Services\MemberProgressService;
 use App\Services\StorageService;
 use Illuminate\Http\JsonResponse;
@@ -44,6 +45,7 @@ class MemberAreaAppController extends Controller
         protected GamificationService $gamificationService,
         protected MemberHubService $memberHubService,
         protected MemberAreaPwaAdminService $memberAreaPwaAdminService,
+        protected MemberNavigationService $navigationService,
     ) {}
 
     /**
@@ -621,6 +623,38 @@ class MemberAreaAppController extends Controller
         ];
     }
 
+    public function nextLessonNavigation(Request $request, string $slug, MemberLesson $lesson): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Não autenticado.'], 401);
+        }
+
+        $product = $this->getProduct($request);
+        $wrapper = $this->findWrapperForEmbeddedLesson($lesson, $product);
+        if ((string) $lesson->product_id !== (string) $product->id && $wrapper === null) {
+            abort(404);
+        }
+        if ($wrapper !== null) {
+            $redirect = $this->assertEmbeddedProductLinkAccess($wrapper, $user);
+            if ($redirect !== null) {
+                return response()->json(['success' => false, 'message' => 'Sem acesso a este conteúdo.'], 403);
+            }
+        }
+
+        $navigation = $this->navigationService->resolveNextNavigation(
+            $product,
+            $user,
+            $lesson,
+            $this->baseUrlForRequest($product, $request)
+        );
+
+        return response()->json([
+            'success' => true,
+            'navigation' => $navigation,
+        ]);
+    }
+
     public function completeLesson(Request $request, string $slug, MemberLesson $lesson): JsonResponse|RedirectResponse
     {
         $user = $request->user();
@@ -651,12 +685,26 @@ class MemberAreaAppController extends Controller
             $request->session()->flash('newly_unlocked_achievements', $newlyUnlocked);
         }
 
+        $navigation = $this->navigationService->resolveNextNavigation(
+            $product,
+            $user,
+            $lesson,
+            $this->baseUrlForRequest($product, $request)
+        );
+
         if ($request->header('X-Inertia')) {
+            $request->session()->flash('lesson_completion_navigation', $navigation);
+
             return redirect()->back();
         }
         $percent = $this->progressService->completionPercent($product, $user);
 
-        return response()->json(['success' => true, 'progress_percent' => $percent, 'newly_unlocked_achievements' => $newlyUnlocked]);
+        return response()->json([
+            'success' => true,
+            'progress_percent' => $percent,
+            'newly_unlocked_achievements' => $newlyUnlocked,
+            'navigation' => $navigation,
+        ]);
     }
 
     public function storeLessonComment(Request $request, string $slug, MemberLesson $lesson): JsonResponse|RedirectResponse

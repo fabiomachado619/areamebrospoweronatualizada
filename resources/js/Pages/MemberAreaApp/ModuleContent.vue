@@ -6,7 +6,9 @@ import Button from '@/components/ui/Button.vue';
 import MemberAreaVideoPlayer from '@/components/MemberAreaVideoPlayer.vue';
 import MemberPdfPresentationViewer from '@/components/MemberPdfPresentationViewer.vue';
 import MemberPdfReader from '@/components/MemberPdfReader.vue';
+import MemberAreaToast from '@/components/MemberAreaToast.vue';
 import { formatLessonDescription } from '@/lib/utils';
+import { useMemberLessonNavigation } from '@/composables/useMemberLessonNavigation';
 import { Link as LinkIcon, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 
 defineOptions({ layout: MemberAreaAppLayout });
@@ -99,7 +101,17 @@ const courseProgress = computed(() => props.course_lesson_progress || { complete
 
 const completedLessonIds = ref(new Set());
 const completed = ref(props.current_lesson?.is_completed ?? false);
+const lessonToastRef = ref(null);
 let autoCompleteTimer = null;
+
+const getLessonContext = () => ({
+    slug: props.slug,
+    lessonId: props.current_lesson?.id,
+    baseUrl: memberAreaBaseUrl.value,
+});
+
+const { navigating, goToNextLesson, handleCompletionNavigation, clearRedirectTimer } =
+    useMemberLessonNavigation(getLessonContext, lessonToastRef);
 
 const isLessonCompleted = (lesson) => lesson.is_completed || completedLessonIds.value.has(lesson.id);
 
@@ -107,7 +119,7 @@ function lessonUrl(lessonId) {
     return `/m/${props.slug}/modulo/${props.module.id}?aula=${lessonId}`;
 }
 
-function markComplete() {
+function markCompleteAuto() {
     if (!props.current_lesson || completed.value) return;
     router.post(`/m/${props.slug}/aula/${props.current_lesson.id}/complete`, {}, {
         preserveScroll: true,
@@ -118,12 +130,24 @@ function markComplete() {
     });
 }
 
+function markCompleteManual() {
+    if (!props.current_lesson || completed.value) return;
+    router.post(`/m/${props.slug}/aula/${props.current_lesson.id}/complete`, {}, {
+        preserveScroll: true,
+        onSuccess: (page) => {
+            completed.value = true;
+            completedLessonIds.value.add(props.current_lesson.id);
+            handleCompletionNavigation(page.props.flash?.lesson_completion_navigation);
+        },
+    });
+}
+
 /** Vídeo: marcar concluído automaticamente após 80% do tempo assistido. */
 function scheduleAutoComplete() {
     if (!props.current_lesson || completed.value) return;
     if (props.current_lesson.type !== 'video' || !props.current_lesson.content_url) return;
     const durationSeconds = Math.max(30, Math.floor((props.current_lesson.duration_seconds || 60) * 0.8));
-    autoCompleteTimer = setTimeout(() => markComplete(), durationSeconds * 1000);
+    autoCompleteTimer = setTimeout(() => markCompleteAuto(), durationSeconds * 1000);
 }
 
 /** Aulas que não são vídeo (link, pdf, texto, etc.): marcar concluído ao exibir. */
@@ -137,11 +161,12 @@ function shouldAutoCompleteNonVideo() {
 onMounted(() => {
     if (props.current_lesson?.is_completed) completed.value = true;
     else if (props.current_lesson?.type === 'video') scheduleAutoComplete();
-    else if (shouldAutoCompleteNonVideo()) setTimeout(() => markComplete(), 500);
+    else if (shouldAutoCompleteNonVideo()) setTimeout(() => markCompleteAuto(), 500);
 });
 
 onUnmounted(() => {
     if (autoCompleteTimer) clearTimeout(autoCompleteTimer);
+    clearRedirectTimer();
 });
 
 const commentContent = ref('');
@@ -210,7 +235,7 @@ function moduleCoverPlaceholderClass() {
 }
 
 function onPdfReaderLastPage() {
-    markComplete();
+    markCompleteAuto();
 }
 </script>
 
@@ -229,7 +254,7 @@ function onPdfReaderLastPage() {
                             :src="current_lesson.content_url"
                             :watermark-enabled="!!current_lesson.watermark_enabled"
                             :watermark-data="current_lesson.student ?? null"
-                            @ended="markComplete"
+                            @ended="markCompleteAuto"
                         />
                         <div
                             v-if="current_lesson.content_text"
@@ -304,10 +329,22 @@ function onPdfReaderLastPage() {
                     </template>
                 </div>
 
-                <div class="flex items-center justify-between">
-                    <Link :href="memberAreaHomeUrl" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)]">← Voltar ao início</Link>
-                    <Button @click="markComplete" :disabled="completed">
-                        {{ completed ? 'Concluído' : 'Marcar como concluído' }}
+                <div class="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                    <Link :href="memberAreaHomeUrl" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)] sm:mr-auto">← Voltar ao início</Link>
+                    <Button
+                        variant="outline"
+                        class="border-zinc-600 bg-transparent text-zinc-200 hover:bg-zinc-700/50"
+                        :disabled="navigating"
+                        @click="goToNextLesson"
+                    >
+                        Próxima aula
+                    </Button>
+                    <Button
+                        class="bg-[var(--ma-primary)] text-white hover:opacity-90"
+                        @click="markCompleteManual"
+                        :disabled="completed"
+                    >
+                        Concluído
                     </Button>
                 </div>
 
@@ -485,5 +522,6 @@ function onPdfReaderLastPage() {
                 </div>
             </div>
         </section>
+        <MemberAreaToast ref="lessonToastRef" />
     </div>
 </template>

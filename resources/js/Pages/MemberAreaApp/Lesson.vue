@@ -6,7 +6,9 @@ import Button from '@/components/ui/Button.vue';
 import MemberAreaVideoPlayer from '@/components/MemberAreaVideoPlayer.vue';
 import MemberPdfPresentationViewer from '@/components/MemberPdfPresentationViewer.vue';
 import MemberPdfReader from '@/components/MemberPdfReader.vue';
+import MemberAreaToast from '@/components/MemberAreaToast.vue';
 import { formatLessonDescription } from '@/lib/utils';
+import { useMemberLessonNavigation } from '@/composables/useMemberLessonNavigation';
 
 defineOptions({ layout: MemberAreaAppLayout });
 
@@ -80,13 +82,34 @@ const pdfReaderFiles = computed(() =>
 const completed = ref(props.lesson.is_completed ?? false);
 const commentContent = ref('');
 const commentSubmitting = ref(false);
+const lessonToastRef = ref(null);
 let autoCompleteTimer = null;
 
-function markComplete() {
+const getLessonContext = () => ({
+    slug: props.slug,
+    lessonId: props.lesson?.id,
+    baseUrl: memberAreaBaseUrl.value,
+});
+
+const { navigating, goToNextLesson, handleCompletionNavigation, clearRedirectTimer } =
+    useMemberLessonNavigation(getLessonContext, lessonToastRef);
+
+function markCompleteAuto() {
     if (completed.value) return;
     router.post(`/m/${props.slug}/aula/${props.lesson.id}/complete`, {}, {
         preserveScroll: true,
         onSuccess: () => { completed.value = true; },
+    });
+}
+
+function markCompleteManual() {
+    if (completed.value) return;
+    router.post(`/m/${props.slug}/aula/${props.lesson.id}/complete`, {}, {
+        preserveScroll: true,
+        onSuccess: (page) => {
+            completed.value = true;
+            handleCompletionNavigation(page.props.flash?.lesson_completion_navigation);
+        },
     });
 }
 
@@ -95,7 +118,7 @@ function scheduleAutoComplete() {
     if (!props.lesson || completed.value) return;
     if (props.lesson.type !== 'video' || !props.lesson.content_url) return;
     const durationSeconds = Math.max(30, Math.floor((props.lesson.duration_seconds || 60) * 0.8));
-    autoCompleteTimer = setTimeout(() => markComplete(), durationSeconds * 1000);
+    autoCompleteTimer = setTimeout(() => markCompleteAuto(), durationSeconds * 1000);
 }
 
 /** Link, PDF, texto, etc.: marcar concluído ao exibir. */
@@ -109,11 +132,12 @@ function shouldAutoCompleteNonVideo() {
 onMounted(() => {
     if (props.lesson?.is_completed) completed.value = true;
     else if (props.lesson?.type === 'video') scheduleAutoComplete();
-    else if (shouldAutoCompleteNonVideo()) setTimeout(() => markComplete(), 500);
+    else if (shouldAutoCompleteNonVideo()) setTimeout(() => markCompleteAuto(), 500);
 });
 
 onUnmounted(() => {
     if (autoCompleteTimer) clearTimeout(autoCompleteTimer);
+    clearRedirectTimer();
 });
 
 function submitComment() {
@@ -125,7 +149,7 @@ function submitComment() {
     });
 }
 function onPdfReaderLastPage() {
-    markComplete();
+    markCompleteAuto();
 }
 
 function formatCommentDate(iso) {
@@ -162,7 +186,7 @@ function formatCommentDate(iso) {
                     :src="lesson.content_url"
                     :watermark-enabled="!!lesson.watermark_enabled"
                     :watermark-data="lesson.student ?? null"
-                    @ended="markComplete"
+                    @ended="markCompleteAuto"
                 />
                 <div
                     v-if="lesson.content_text"
@@ -236,12 +260,26 @@ function formatCommentDate(iso) {
             </div>
         </div>
 
-        <div class="flex items-center justify-between">
-            <Link :href="`/m/${slug}/modulos`" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)]">← Voltar aos módulos</Link>
-            <Button @click="markComplete" :disabled="completed">
-                {{ completed ? 'Concluído' : 'Marcar como concluído' }}
+        <div class="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <Link :href="`/m/${slug}/modulos`" class="text-sm text-zinc-400 hover:text-[var(--ma-primary)] sm:mr-auto">← Voltar aos módulos</Link>
+            <Button
+                variant="outline"
+                class="border-zinc-600 bg-transparent text-zinc-200 hover:bg-zinc-700/50"
+                :disabled="navigating"
+                @click="goToNextLesson"
+            >
+                Próxima aula
+            </Button>
+            <Button
+                class="bg-[var(--ma-primary)] text-white hover:opacity-90"
+                @click="markCompleteManual"
+                :disabled="completed"
+            >
+                        Concluído
             </Button>
         </div>
+
+        <MemberAreaToast ref="lessonToastRef" />
 
         <!-- Comentários da aula -->
         <section v-if="comments_enabled" class="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 space-y-4">
